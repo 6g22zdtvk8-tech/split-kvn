@@ -48,6 +48,9 @@ MAX_ARCHIVE_BYTES=52428800   # 50 MB: the installer folder is ~50 MB unpacked
 log() {
     logger -t vpn-manager-update "$1"
     [ -t 1 ] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    # Without this, log returns 1 whenever there is no terminal (cron, the panel),
+    # and "a && log || b" ran b too: a good rollback was reported as failed.
+    return 0
 }
 
 need_tools() {
@@ -182,7 +185,12 @@ make_backup() {
     local tag="$1"
     mkdir -p "$BACKUP_DIR"
     local out="$BACKUP_DIR/pre-update-$tag-$(date +%Y%m%d%H%M%S).tar.gz"
-    if (umask 077 && tar -cf - \
+    # The backups folder itself stays out: restoring would overwrite the very archive
+    # being restored with a cut copy of itself, and every backup would nest all older ones.
+    local exclude="$WORK_DIR/backup-exclude"
+    mkdir -p "$WORK_DIR"
+    printf '%s\n' 'opt/etc/vpn-manager/backups' 'opt/etc/vpn-manager/backups/*' > "$exclude"
+    if (umask 077 && tar -cf - -X "$exclude" \
             -C / \
             opt/etc/vpn-manager \
             opt/share/www/vpn-manager \
@@ -200,16 +208,35 @@ make_backup() {
 restore_backup() {
     local archive="$1"
     [ -s "$archive" ] || return 1
-    gzip -dc "$archive" | tar -xf - -C / 2>/dev/null || return 1
+    # Backups made before 2.15.55 still carry the backups folder: never unpack it
+    # over the archive we are reading from.
+    local exclude="$WORK_DIR/backup-exclude"
+    mkdir -p "$WORK_DIR"
+    printf '%s\n' 'opt/etc/vpn-manager/backups' 'opt/etc/vpn-manager/backups/*' > "$exclude"
+    gzip -dc "$archive" | tar -xf - -X "$exclude" -C / 2>/dev/null || return 1
     return 0
 }
 
 # Is the router still working after the update? Panel answering, sing-box alive,
 # its config still valid. Anything else is the caller's business.
 self_check() {
+    local want="$1"
     local port; port=$(setting '.web_port' '8001')
 
+    # The installer really put this release in place, not just exited 0
+    if [ -n "$want" ] && [ "$(current_version)" != "$want" ]; then
+        log "Self-check: installed version is '$(current_version)', expected '$want'"
+        return 1
+    fi
+
+    # Let sing-box settle: a stop in progress still shows a pid for a moment
+    # (26.09 test: the check passed, sing-box was gone a second later).
+    sleep 5
+    local i=0
+    while [ $i -lt 10 ] && ! pidof sing-box >/dev/null 2>&1; do sleep 1; i=$((i + 1)); done
     pidof sing-box >/dev/null 2>&1 || { log "Self-check: sing-box is not running"; return 1; }
+    sleep 3
+    pidof sing-box >/dev/null 2>&1 || { log "Self-check: sing-box stopped right after start"; return 1; }
 
     if command -v sing-box >/dev/null 2>&1 && [ -s "$SINGBOX_CONFIG" ]; then
         sing-box check -c "$SINGBOX_CONFIG" >/dev/null 2>&1 || { log "Self-check: sing-box config rejected"; return 1; }
@@ -235,8 +262,18 @@ do_apply() {
     mkdir -p "$WORK_DIR"
     local manifest="$WORK_DIR/manifest.json"
     rm -f "$manifest"
-    fetch "$src" "$manifest" "$FETCH_TIMEOUT" || { log "ERROR: manifest not reachable"; return 1; }
-    jq empty "$manifest" 2>/dev/null || { log "ERROR: manifest is not valid JSON"; return 1; }
+    # The panel's "Update now" comes straight here without a check first, so a
+    # failure must be recorded here too or the panel keeps an old "available".
+    if ! fetch "$src" "$manifest" "$FETCH_TIMEOUT"; then
+        log "ERROR: manifest not reachable"
+        write_state "" "" "" "check-unreachable"
+        return 1
+    fi
+    if ! jq empty "$manifest" 2>/dev/null; then
+        log "ERROR: manifest is not valid JSON"
+        write_state "" "" "" "check-bad-manifest"
+        return 1
+    fi
 
     local av ro url sum cur notes
     av=$(jq -r '.version // empty' "$manifest")
@@ -326,15 +363,27 @@ do_apply() {
     log "Installing $cur -> $av"
     if ! sh "$root/install-singbox.sh" update >/dev/null 2>&1; then
         log "ERROR: installer returned a failure — rolling back"
-        restore_backup "$backup" && log "Rolled back to $cur" || log "ERROR: rollback failed, backup kept at $backup"
+        if restore_backup "$backup"; then
+            log "Rolled back to $cur"
+        else
+            log "ERROR: rollback failed, backup kept at $backup"
+        fi
+        # The installer may have stopped sing-box before it failed
+        if ! pidof sing-box >/dev/null 2>&1; then
+            rm -f /opt/var/run/sing-box.stopped
+            /opt/etc/init.d/S99sing-box start >/dev/null 2>&1 || true
+            /opt/etc/init.d/S98singbox-rules start 0 >/dev/null 2>&1 || true
+        fi
         write_state "$av" "$ro" "$notes" "install-failed"
         return 1
     fi
 
-    if ! self_check; then
+    if ! self_check "$av"; then
         log "ERROR: self-check failed after update — rolling back"
         if restore_backup "$backup"; then
+            rm -f /opt/var/run/sing-box.stopped
             /opt/etc/init.d/S99sing-box restart >/dev/null 2>&1 || true
+            /opt/etc/init.d/S98singbox-rules start 0 >/dev/null 2>&1 || true
             log "Rolled back to $cur"
         else
             log "ERROR: rollback failed, backup kept at $backup"

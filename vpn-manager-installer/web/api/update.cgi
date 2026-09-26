@@ -27,6 +27,21 @@ settings_get() {
     [ -f "$SETTINGS_FILE" ] && jq -r "$1 // empty" "$SETTINGS_FILE" 2>/dev/null
 }
 
+settings_set_arg() {
+    # settings_set_arg <jq assignment using $v> <value>
+    local tmp
+    mkdir -p "$(dirname "$SETTINGS_FILE")"
+    [ -f "$SETTINGS_FILE" ] || echo '{}' > "$SETTINGS_FILE"
+    tmp=$(mktemp) || return 1
+    if jq --arg v "$2" "$1" "$SETTINGS_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv "$tmp" "$SETTINGS_FILE"
+        chmod 644 "$SETTINGS_FILE"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
 settings_set() {
     # settings_set <jq assignment>
     local tmp
@@ -136,7 +151,9 @@ do_set_source() {
             *) json_error "Source must be an https:// address" 400; return ;;
         esac
     fi
-    if settings_set ".update_source_url = \"$url\""; then
+    # Passed to jq as data, never spliced into the expression: a crafted "URL"
+    # could otherwise rewrite any other setting.
+    if settings_set_arg '.update_source_url = $v' "$url"; then
         json_success "$(current_state)"
     else
         json_error "Could not save the setting" 500

@@ -1015,6 +1015,7 @@
             'success.serverPortChanged': 'VPN server port changed successfully',
             'success.updateSourceSaved': 'Update source saved',
             'success.updateStarted': 'Update started',
+            'success.updateDone': 'Updated to {version}',
             'success.updateChecked': 'Checked',
             'success.autoUpdateOn': 'Automatic updates enabled',
             'success.autoUpdateOff': 'Automatic updates disabled',
@@ -1899,6 +1900,7 @@
             'success.serverPortChanged': 'Порт VPN-сервера успешно изменён',
             'success.updateSourceSaved': 'Источник обновлений сохранён',
             'success.updateStarted': 'Обновление запущено',
+            'success.updateDone': 'Обновлено до {version}',
             'success.updateChecked': 'Проверено',
             'success.autoUpdateOn': 'Автообновление включено',
             'success.autoUpdateOff': 'Автообновление выключено',
@@ -5745,7 +5747,7 @@
         if (failKey) {
             setUpdateLine(statusEl, t(failKey), 'text-error');
         } else if (d.last_result === 'updated') {
-            setUpdateLine(statusEl, t('success.updateStarted'), 'text-success');
+            setUpdateLine(statusEl, t('success.updateDone').replace('{version}', d.installed || d.current || ''), 'text-success');
         } else if (d.held && newer) {
             setUpdateLine(statusEl, t('settings.updateHeld'), 'text-warning');
         } else if (!newer && d.checked_at) {
