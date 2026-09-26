@@ -642,6 +642,9 @@
             'import.title': 'Import Configuration',
             'import.file': 'File (.conf)',
             'import.subscription': 'Subscription',
+            'import.tabLink': 'URL / subscription',
+            'import.linkLabel': 'Server link or subscription link',
+            'import.linkHint': 'A server link (Shadowsocks, VLESS, VMess, Trojan) adds one server; an https:// link adds a subscription.',
             'import.configUrl': 'Configuration URL',
             'import.supportedProtocols': 'Supported: Shadowsocks, VLESS, VMess, Trojan',
             'import.subscriptionUrl': 'Subscription URL',
@@ -1773,6 +1776,9 @@
             'import.title': 'Импорт конфигурации',
             'import.file': 'Файл (.conf)',
             'import.subscription': 'Подписка',
+            'import.tabLink': 'URL / подписка',
+            'import.linkLabel': 'Ссылка на сервер или подписку',
+            'import.linkHint': 'Ссылка на сервер (Shadowsocks, VLESS, VMess, Trojan) добавит один сервер, ссылка https:// — подписку.',
             'import.configUrl': 'URL конфигурации',
             'import.supportedProtocols': 'Поддерживаются: Shadowsocks, VLESS, VMess, Trojan',
             'import.subscriptionUrl': 'URL подписки',
@@ -4428,11 +4434,34 @@
         $('#import-url-section')?.classList.remove('hidden');
         $('#import-file-section')?.classList.add('hidden');
         $('#import-subscription-section')?.classList.add('hidden');
+        applyImportLinkKind();
         
         showModal(modal);
         urlInput.focus();
     }
     
+    // B22: a server link imports one server, an http(s)/ssconf link is a subscription
+    function importLinkKind(value) {
+        return /^(https?|ssconf):\/\//i.test((value || '').trim()) ? 'subscription' : 'config';
+    }
+
+    // On the link tab: show the subscription fields and buttons only for a subscription link
+    function applyImportLinkKind() {
+        if (currentImportTab !== 'url') return;
+        const value = $('#import-url')?.value || '';
+        const isSub = importLinkKind(value) === 'subscription';
+        const subUrl = $('#subscription-url');
+        if (subUrl) subUrl.value = value.trim();
+        $('#import-subscription-section')?.classList.toggle('hidden', !isSub);
+        if (isSub) $('#import-preview')?.classList.add('hidden');
+        else $('#subscription-preview')?.classList.add('hidden');
+        const show = (sel, on) => { const el = $(sel); if (el) el.style.display = on ? '' : 'none'; };
+        show('#import-parse-btn', !isSub);
+        show('#import-save-btn', !isSub);
+        show('#subscription-preview-btn', isSub);
+        show('#subscription-save-btn', isSub);
+    }
+
     function switchImportTab(tabName) {
         currentImportTab = tabName;
         
@@ -4480,6 +4509,7 @@
         $('#import-save-btn').disabled = true;
         $('#subscription-save-btn').disabled = true;
         importedConfigData = null;
+        applyImportLinkKind();
     }
     
     function showImportPreview(data) {
@@ -6733,7 +6763,11 @@
             const input = $(sel);
             if (!input) return;
             input.addEventListener('input', () => {
-                if (sel === '#import-url' && importSaveBtn) importSaveBtn.disabled = true;
+                if (sel === '#import-url') {
+                    if (importSaveBtn) importSaveBtn.disabled = true;
+                    if (subSaveBtn) subSaveBtn.disabled = true;
+                    applyImportLinkKind();
+                }
                 if (sel === '#subscription-url' && subSaveBtn) subSaveBtn.disabled = true;
             });
         });

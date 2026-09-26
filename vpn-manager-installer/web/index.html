@@ -1819,23 +1819,24 @@
             </div>
             <div class="modal-body">
                 <div class="import-tabs">
-                    <button type="button" class="import-tab active" data-import-tab="url">URL</button>
+                    <!-- B22: one tab for a server link or a subscription link; the panel tells them apart -->
+                    <button type="button" class="import-tab active" data-import-tab="url" data-i18n="import.tabLink">URL / subscription</button>
                     <button type="button" class="import-tab" data-import-tab="file" data-i18n="import.file">File (.conf)</button>
-                    <button type="button" class="import-tab" data-import-tab="subscription" data-i18n="import.subscription">Subscription</button>
                 </div>
                 
                 <div id="import-url-section" class="import-section">
                     <div class="form-group">
-                        <label for="import-url" data-i18n="import.configUrl">Configuration URL</label>
+                        <label for="import-url" data-i18n="import.linkLabel">Server link or subscription link</label>
                         <input type="text" id="import-url" name="import-url" 
-                               placeholder="ss://... or vless://... or trojan://... or vmess://..."
-                               class="form-control">
-                        <small class="form-hint" data-i18n="import.supportedProtocols">Supported: Shadowsocks, VLESS, VMess, Trojan</small>
+                               placeholder="vless://… ss://… trojan://… vmess://… https://…"
+                               class="form-control" autocomplete="off">
+                        <small class="form-hint" data-i18n="import.linkHint">A server link (Shadowsocks, VLESS, VMess, Trojan) adds one server; an https:// link adds a subscription.</small>
                     </div>
                 </div>
                 
                 <div id="import-subscription-section" class="import-section hidden">
-                    <div class="form-group">
+                    <!-- B22: filled from the link field above -->
+                    <div class="form-group hidden">
                         <label for="subscription-url" data-i18n="import.subscriptionUrl">Subscription URL</label>
                         <input type="text" id="subscription-url" name="subscription-url" 
                                placeholder="https://... or ssconf://..."
