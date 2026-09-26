@@ -1,0 +1,74 @@
+# Builds a release when a version tag (v2.15.53) is pushed.
+#
+# Assets:
+#   split-kvn-update-<ver>.tar.gz  — the installer folder; routers install it in update mode
+#   split-kvn-usb-<ver>.zip        — the whole folder for a USB stick (fresh install)
+#   manifest.json                  — what routers read: version, archive url, sha256, rollout
+#
+# Rollout: "hold" unless the tag message has a line "rollout: auto". Routers take
+# "auto" releases by themselves at night; "hold" waits until the owner clears it
+# with the "Clear release for routers" workflow (Actions tab → Run workflow).
+# The rest of the tag message becomes the release notes shown in the panel.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version and tag message
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          file_ver=$(tr -d '[:space:]' < vpn-manager-installer/VERSION)
+          if [ "$ver" != "$file_ver" ]; then
+            echo "Tag $tag does not match VERSION $file_ver" >&2
+            exit 1
+          fi
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          msg=$(git tag -l --format='%(contents)' "$tag")
+          rollout=hold
+          echo "$msg" | grep -qiE '^rollout:[[:space:]]*auto[[:space:]]*$' && rollout=auto
+          notes=$(echo "$msg" | grep -viE '^rollout:' | sed '/^-----BEGIN/,$d')
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "rollout=$rollout" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$notes" > notes.txt
+
+      - name: Build archives
+        run: |
+          ver="${{ steps.meta.outputs.ver }}"
+          mkdir -p dist
+          tar --owner=0 --group=0 -czf "dist/split-kvn-update-$ver.tar.gz" vpn-manager-installer
+          zip -qr "dist/split-kvn-usb-$ver.zip" . -x '.git/*' '.github/*' 'dist/*' 'notes.txt'
+
+      - name: Write manifest
+        run: |
+          ver="${{ steps.meta.outputs.ver }}"
+          archive="split-kvn-update-$ver.tar.gz"
+          sum=$(sha256sum "dist/$archive" | cut -d' ' -f1)
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$archive"
+          jq -n --arg v "$ver" --arg r "${{ steps.meta.outputs.rollout }}" --arg u "$url" \
+                --arg s "$sum" --rawfile n notes.txt \
+            '{version: $v, rollout: $r, url: $u, sha256: $s, notes_ru: ($n | rtrimstr("\n"))}' \
+            > dist/manifest.json
+          cat dist/manifest.json
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Split-KVN ${{ steps.meta.outputs.ver }}" \
+            --notes-file notes.txt

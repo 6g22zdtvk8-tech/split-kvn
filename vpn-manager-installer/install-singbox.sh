@@ -174,6 +174,8 @@ schedule_ndmc_postinstall() {
 # Version sing-box for download
 # =============================================================================
 SINGBOX_VERSION="1.14.1-extended-2.7.2"
+# B2: where routers look for new releases (the manifest of the latest GitHub release)
+DEFAULT_UPDATE_SOURCE="https://github.com/6g22zdtvk8-tech/split-kvn/releases/latest/download/manifest.json"
 
 # architectures Keenetic:
 # - aarch64: Peak, Titan (KN-1811), Giga (KN-1012), Hopper (KN-3811/3812)
@@ -1411,7 +1413,8 @@ install_vpn_manager() {
   "failover_mode": "off",
   "failover_check_interval": 300,
   "auto_update": true,
-  "update_source_url": "",
+  "update_source_url": "https://github.com/6g22zdtvk8-tech/split-kvn/releases/latest/download/manifest.json",
+  "update_source_migrated": true,
   "usdt_wallet": "TKeLZvc52avetPTngMC4TvJrv9zAu56Tv2"
 }
 EOF
@@ -1432,6 +1435,17 @@ EOF
             jq '. + {"auto_update": true, "update_source_url": (.update_source_url // "")}' \
                 "$VPN_MANAGER_HOME/settings.json" > "$tmp_au" && mv "$tmp_au" "$VPN_MANAGER_HOME/settings.json"
             log_ok "Added self-update keys to existing settings (on, no source yet)"
+        fi
+
+        # Routers set up before releases were published have an empty source. Point
+        # them at the published releases once; after that an empty source is the
+        # owner's own choice (it switches updates off) and is left alone.
+        if ! jq -e '.update_source_migrated' "$VPN_MANAGER_HOME/settings.json" >/dev/null 2>&1; then
+            local tmp_src=$(mktemp)
+            jq --arg u "$DEFAULT_UPDATE_SOURCE" \
+                '(if (.update_source_url // "") == "" then .update_source_url = $u else . end) | .update_source_migrated = true' \
+                "$VPN_MANAGER_HOME/settings.json" > "$tmp_src" && mv "$tmp_src" "$VPN_MANAGER_HOME/settings.json"
+            log_ok "Update source: $(jq -r '.update_source_url' "$VPN_MANAGER_HOME/settings.json")"
         fi
     fi
     

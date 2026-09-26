@@ -1,0 +1,36 @@
+# The owner's switch: lets routers take a release that was published on hold.
+# Actions tab → "Clear release for routers" → Run workflow → enter the tag (v2.15.53).
+# Only the manifest's "rollout" changes; the archive and its checksum stay as built.
+
+name: Clear release for routers
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v2.15.53'
+        required: true
+      rollout:
+        description: 'auto = routers install it by themselves; hold = they wait'
+        required: true
+        default: auto
+        type: choice
+        options: [auto, hold]
+
+permissions:
+  contents: write
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rewrite manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          ROLLOUT: ${{ inputs.rollout }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p manifest.json -D in
+          jq --arg r "$ROLLOUT" '.rollout = $r' in/manifest.json > manifest.json
+          cat manifest.json
+          gh release upload "$TAG" manifest.json --clobber -R "$GITHUB_REPOSITORY"

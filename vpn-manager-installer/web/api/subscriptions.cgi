@@ -79,6 +79,35 @@ _is_stub_content() {
     return 1
 }
 
+# Server links the panel can read, plain or base64 (not a Xray/Clash config file).
+_has_share_links() {
+    local file="$1"
+    grep -qE '^(ss|vless|vmess|trojan|hysteria2|hy2|tuic)://' "$file" && return 0
+    tr -d '[:space:]' < "$file" | base64 -d 2>/dev/null | grep -qE '^(ss|vless|vmess|trojan|hysteria2|hy2|tuic)://'
+}
+
+# Some providers answer Happ with a whole Xray JSON config instead of links, but give
+# links to v2rayN. Same router HWID, so no extra device is used up on the provider side.
+# Args: $1 = url, $2 = headers_file, $3 = content_file, $4 = extra curl args (e.g. SOCKS)
+_retry_links_ua() {
+    _has_share_links "$3" && return 0
+    local router_hwid
+    router_hwid=$(get_router_hwid)
+    local tmp="$3.links"
+    curl -sL --connect-timeout 10 --max-time 30 $4 \
+         -H "User-Agent: v2rayN/7.0" \
+         -H "x-hwid: $router_hwid" \
+         -D "$tmp.h" -o "$tmp" \
+         "$1" 2>/dev/null
+    if [ -s "$tmp" ] && _has_share_links "$tmp"; then
+        mv "$tmp" "$3"
+        [ -n "$2" ] && mv "$tmp.h" "$2"
+        log_action "SUBSCRIPTION_FETCH" "Happ UA gave no links for $1, took links via v2rayN UA"
+    fi
+    rm -f "$tmp" "$tmp.h"
+    return 0
+}
+
 # Internal: try to download a URL, falling back to the active VPN's SOCKS5 if the direct attempt fails.
 # If the response is a stub (HWID-protected subscription), retries with Happ UA + router HWID.
 # Args: $1 = url, $2 = headers_file (optional), $3 = content_file (required)
@@ -180,6 +209,7 @@ _fetch_with_happ_ua() {
         fi
         _LAST_FETCH_USED_VPN=0
         log_action "SUBSCRIPTION_FETCH" "Succeeded with Happ UA for $url (HWID: $router_hwid)"
+        _retry_links_ua "$url" "$headers_file" "$content_file" ""
         return 0
     fi
     
@@ -200,6 +230,7 @@ _fetch_with_happ_ua() {
         if [ $rc -eq 0 ] && [ -s "$content_file" ] && ! _is_stub_content "$(cat "$content_file")"; then
             _LAST_FETCH_USED_VPN=1
             log_action "SUBSCRIPTION_FETCH" "Happ UA via VPN succeeded for $url"
+            _retry_links_ua "$url" "$headers_file" "$content_file" "--socks5-hostname 127.0.0.1:2080"
             return 0
         fi
     fi

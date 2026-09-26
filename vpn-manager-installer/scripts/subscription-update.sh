@@ -40,6 +40,13 @@ is_stub_content() {
     return 1
 }
 
+# Server links we can read, plain or base64 (not a Xray/Clash config file)
+has_share_links() {
+    local re='^(ss|vless|vmess|trojan|hysteria2|hy2|tuic)://'
+    echo "$1" | grep -qE "$re" && return 0
+    echo "$1" | tr -d '[:space:]' | base64 -d 2>/dev/null | grep -qE "$re"
+}
+
 # Check subscriptions file
 if [ ! -f "$SUBSCRIPTIONS_FILE" ]; then
     exit 0
@@ -90,6 +97,7 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
     ROUTER_HWID=$(get_router_hwid)
     HAPP_UA="Happ/4.9.0/linux/$ROUTER_HWID"
     USED_VPN=0
+    HAPP_TRIED=0
 
     CONTENT=$(curl -sL --connect-timeout 10 --max-time 30 \
                    -H "User-Agent: VPN-Manager/1.0" \
@@ -98,6 +106,7 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
     # If stub response — retry with Happ UA + router HWID
     if [ -n "$CONTENT" ] && is_stub_content "$CONTENT"; then
         log "[$SUB_NAME] Stub response, retrying with Happ UA + router HWID..."
+        HAPP_TRIED=1
         CONTENT=$(curl -sL --connect-timeout 10 --max-time 30 \
                        -H "User-Agent: $HAPP_UA" \
                        -H "x-hwid: $ROUTER_HWID" \
@@ -112,6 +121,7 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
                        "$FETCH_URL" 2>/dev/null)
         if [ -n "$CONTENT" ] && is_stub_content "$CONTENT"; then
             log "[$SUB_NAME] Stub via VPN, retrying with Happ UA + router HWID..."
+            HAPP_TRIED=1
             CONTENT=$(curl -sL --connect-timeout 15 --max-time 45 \
                            --socks5-hostname 127.0.0.1:2080 \
                            -H "User-Agent: $HAPP_UA" \
@@ -119,6 +129,21 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
                            "$FETCH_URL" 2>/dev/null)
         fi
         [ -n "$CONTENT" ] && USED_VPN=1
+    fi
+
+    # Some providers answer Happ with a whole Xray JSON config, but give links to v2rayN.
+    # Same router HWID, so no extra device is used up on the provider side.
+    if [ "$HAPP_TRIED" = "1" ] && [ -n "$CONTENT" ] && ! has_share_links "$CONTENT"; then
+        SOCKS_ARG=""
+        [ "$USED_VPN" = "1" ] && SOCKS_ARG="--socks5-hostname 127.0.0.1:2080"
+        LINKS=$(curl -sL --connect-timeout 10 --max-time 30 $SOCKS_ARG \
+                     -H "User-Agent: v2rayN/7.0" \
+                     -H "x-hwid: $ROUTER_HWID" \
+                     "$FETCH_URL" 2>/dev/null)
+        if [ -n "$LINKS" ] && has_share_links "$LINKS"; then
+            log "[$SUB_NAME] No links in the answer, took links via v2rayN UA"
+            CONTENT="$LINKS"
+        fi
     fi
 
     if [ -z "$CONTENT" ]; then

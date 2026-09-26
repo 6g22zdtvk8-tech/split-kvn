@@ -99,12 +99,16 @@ version_gt() {
 # Fetch a URL directly, then through the tunnel. Subscription servers taught us
 # the direct path can be closed while the tunnel works; the manifest host is no
 # different, and a router that cannot reach it must not be stuck on an old build.
+# -L: GitHub serves release files through a redirect. -f: a 404 page is not a
+# manifest — without it "no release yet" looked like a broken manifest.
 fetch() {
     local url="$1" out="$2" timeout="$3"
-    if curl -s --max-time "$timeout" -o "$out" "$url" 2>/dev/null && [ -s "$out" ]; then
+    rm -f "$out"
+    if curl -sfL --max-time "$timeout" -o "$out" "$url" 2>/dev/null && [ -s "$out" ]; then
         return 0
     fi
-    if curl -s --max-time "$timeout" --socks5-hostname "$VPN_SOCKS" -o "$out" "$url" 2>/dev/null && [ -s "$out" ]; then
+    rm -f "$out"
+    if curl -sfL --max-time "$timeout" --socks5-hostname "$VPN_SOCKS" -o "$out" "$url" 2>/dev/null && [ -s "$out" ]; then
         log "Fetched via VPN fallback: $url"
         return 0
     fi
@@ -242,7 +246,13 @@ do_apply() {
     notes=$(jq -r '.notes_ru // .notes_en // ""' "$manifest")
     cur=$(current_version)
 
-    [ -z "$av" ] || [ -z "$url" ] || [ -z "$sum" ] && { log "ERROR: manifest is incomplete"; return 1; }
+    # Leave a trace here too: otherwise the panel keeps the check's "checked" and
+    # shows a release as available that can never be installed.
+    if [ -z "$av" ] || [ -z "$url" ] || [ -z "$sum" ]; then
+        log "ERROR: manifest is incomplete"
+        write_state "$av" "$ro" "$notes" "check-bad-manifest"
+        return 1
+    fi
 
     if [ "$(version_gt "$av" "$cur")" != "1" ]; then
         log "Nothing to do: installed $cur, published $av"
