@@ -2289,6 +2289,23 @@ select {
     display: block;
 }
 
+/* B25: domains and subnets — four equal tabs in a row; two by two on a phone */
+.lists-subtabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.lists-subtabs .subtab {
+    justify-content: center;
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    .lists-subtabs {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
 .subtab-content.hidden {
     display: none;
 }

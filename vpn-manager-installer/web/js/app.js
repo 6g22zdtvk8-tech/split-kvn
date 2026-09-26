@@ -51,13 +51,21 @@
             
             // Tabs
             'tab.vpn': 'VPN Configs',
-            'tab.domains': 'Domains',
+            'tab.domains': 'Domains and subnets',
             'tab.subnets': 'IP Subnets',
             'tab.server': 'VPN Server',
             
             // Subtabs
             'subtab.tcpudp': 'TCP + UDP',
             'subtab.udponly': 'UDP-only',
+            'subtab.domainsTcpUdp': 'Domains',
+            'subtab.domainsUdp': 'Domains UDP',
+            'subtab.subnetsTcpUdp': 'Subnets',
+            'subtab.subnetsUdp': 'Subnets UDP',
+            'lists.tabTitle': 'Domains and subnets',
+            'lists.modeSplitWhatBoth': 'these sites and addresses go through VPN',
+            'lists.modeVpnPrimaryWhatBoth': 'these sites and addresses go direct',
+            'lists.bothListsHintBoth': 'If the same site or address is in both lists, it always goes through VPN.',
             
             // VPN Tab
             'vpn.title': 'VPN Configurations',
@@ -802,6 +810,7 @@
             'lists.replaceConfirm': 'Replace current list? (Cancel — append to end)',
             'lists.empty': '(empty)',
             'lists.leadDomains': 'Here are the domain lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.',
+            'lists.leadBoth': 'Here are the domain and subnet lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.',
             'lists.leadSubnets': 'Here are the subnet lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.',
             'lists.modeSplit': 'Direct primary',
             'lists.modeSplitWhat': 'these sites go through VPN',
@@ -1076,13 +1085,21 @@
             
             // Tabs
             'tab.vpn': 'VPN-конфигурации',
-            'tab.domains': 'Домены',
+            'tab.domains': 'Домены и подсети',
             'tab.subnets': 'IP-подсети',
             'tab.server': 'VPN-сервер',
             
             // Subtabs
             'subtab.tcpudp': 'TCP + UDP',
             'subtab.udponly': 'Только UDP',
+            'subtab.domainsTcpUdp': 'Домены',
+            'subtab.domainsUdp': 'Домены UDP',
+            'subtab.subnetsTcpUdp': 'Подсети',
+            'subtab.subnetsUdp': 'Подсети UDP',
+            'lists.tabTitle': 'Домены и подсети',
+            'lists.modeSplitWhatBoth': 'эти сайты и адреса идут через VPN',
+            'lists.modeVpnPrimaryWhatBoth': 'эти сайты и адреса идут напрямую',
+            'lists.bothListsHintBoth': 'Если один и тот же сайт или адрес есть в обоих списках, он всегда идёт через VPN.',
             
             // VPN Tab
             'vpn.title': 'VPN-конфигурации',
@@ -1486,6 +1503,7 @@
             'time.min': 'мин',
             'lists.invalidLinesSkipped': 'Пропущено невалидных строк: {n}',
             'lists.leadDomains': 'Здесь — списки доменов для режимов Direct primary и VPN primary. Сам режим для каждой сети задаётся на главной странице, в разделе <a href="#routing-tile" class="list-segments-link" data-goto-segments>«Сегменты»</a>.',
+            'lists.leadBoth': 'Здесь — списки доменов и подсетей для режимов Direct primary и VPN primary. Сам режим для каждой сети задаётся на главной странице, в разделе <a href="#routing-tile" class="list-segments-link" data-goto-segments>«Сегменты»</a>.',
             'lists.leadSubnets': 'Здесь — списки подсетей для режимов Direct primary и VPN primary. Сам режим для каждой сети задаётся на главной странице, в разделе <a href="#routing-tile" class="list-segments-link" data-goto-segments>«Сегменты»</a>.',
             'lists.modeSplit': 'Direct primary',
             'lists.modeSplitWhat': 'эти сайты — через VPN',
@@ -4877,7 +4895,8 @@
             const panel = $(`#list-mode-panel-${tab}`);
             if (panel) panel.dataset.mode = mode;
             const rule = $(`#list-mode-rule-${tab}`);
-            if (rule) rule.innerHTML = t(tab === 'subnets' ? `${ruleKey}Subnets` : ruleKey);
+            const aboutSubnets = tab === 'subnets' || (state.currentDomainsSubtab || '').startsWith('subnets-');
+            if (rule) rule.innerHTML = t(aboutSubnets ? `${ruleKey}Subnets` : ruleKey);
             // Sub-tab descriptions follow the mode: in VPN primary the list goes direct
             ['tcpudp', 'udponly'].forEach(type => {
                 const desc = $(`#${tab}-desc-${type}`);
@@ -4935,7 +4954,9 @@
     function listsHaveUnsavedChanges() {
         if (state.currentTab === 'domains') {
             return (elements.domainsEditorTcpUdp && elements.domainsEditorTcpUdp.value !== state.domainsTcpUdpOriginal) ||
-                (elements.domainsEditorUdpOnly && elements.domainsEditorUdpOnly.value !== state.domainsUdpOnlyOriginal);
+                (elements.domainsEditorUdpOnly && elements.domainsEditorUdpOnly.value !== state.domainsUdpOnlyOriginal) ||
+                (elements.subnetsEditorTcpUdp && elements.subnetsEditorTcpUdp.value !== state.subnetsTcpUdpOriginal) ||
+                (elements.subnetsEditorUdpOnly && elements.subnetsEditorUdpOnly.value !== state.subnetsUdpOnlyOriginal);
         }
         if (state.currentTab === 'subnets') {
             return (elements.subnetsEditorTcpUdp && elements.subnetsEditorTcpUdp.value !== state.subnetsTcpUdpOriginal) ||
@@ -4953,7 +4974,7 @@
         hideListOverlapWarnings();
 
         // The other tab reloads its lists when opened
-        if (state.currentTab === 'domains') loadDomains();
+        if (state.currentTab === 'domains') { loadDomains(); loadSubnets(); }
         else if (state.currentTab === 'subnets') loadSubnets();
     }
 
@@ -4976,7 +4997,8 @@
 
         state.listSet = listBinding[state.listMode];
         updateListModeUI();
-        if (tab === 'domains') loadDomains();
+        // B25: domains and subnets share one tab
+        if (tab === 'domains') { loadDomains(); loadSubnets(); }
         else loadSubnets();
     }
 
@@ -5091,6 +5113,7 @@
     // Domain subtab switching
     function switchDomainsSubtab(subtabName) {
         state.currentDomainsSubtab = subtabName;
+        if (subtabName.startsWith('subnets-')) state.currentSubnetsSubtab = subtabName;
         
         elements.subtabs.forEach(tab => {
             tab.classList.toggle('active', tab.dataset.subtab === subtabName);
@@ -5100,6 +5123,7 @@
             content.classList.toggle('hidden', content.id !== `subtab-${subtabName}`);
             content.classList.toggle('active', content.id === `subtab-${subtabName}`);
         });
+        updateListModeUI(); // the rule text says "sites" or "addresses"
     }
     
     async function loadDomains() {
@@ -5133,7 +5157,7 @@
             // Update stats
             const tcpUdpCount = tcpUdpData.data?.domains_count || 0;
             const udpOnlyCount = udpOnlyData.data?.domains_count || 0;
-            elements.domainsStats.textContent = `TCP+UDP: ${tcpUdpCount} | UDP-only: ${udpOnlyCount}`;
+            elements.domainsStats.textContent = `${t('subtab.domainsTcpUdp')}: ${tcpUdpCount} + ${udpOnlyCount} UDP`;
             
         } catch (error) {
             showToast(t('errors.loadDomains'), 'error');
@@ -5336,7 +5360,7 @@
             const tcpUdpCount = tcpUdpData.data?.subnets_count || 0;
             const udpOnlyCount = udpOnlyData.data?.subnets_count || 0;
             if (elements.subnetsStats) {
-                elements.subnetsStats.textContent = `TCP+UDP: ${tcpUdpCount} | UDP-only: ${udpOnlyCount}`;
+                elements.subnetsStats.textContent = `${t('subtab.subnetsTcpUdp')}: ${tcpUdpCount} + ${udpOnlyCount} UDP`;
             }
             
         } catch (error) {
@@ -6701,6 +6725,31 @@
         }
         if (subSaveBtn) {
             subSaveBtn.addEventListener('click', () => saveSubscription());
+        }
+
+        // B24: Enter in the import window — first it checks, once the check has
+        // passed the next Enter adds. A changed link must be checked again first.
+        ['#import-url', '#subscription-url'].forEach(sel => {
+            const input = $(sel);
+            if (!input) return;
+            input.addEventListener('input', () => {
+                if (sel === '#import-url' && importSaveBtn) importSaveBtn.disabled = true;
+                if (sel === '#subscription-url' && subSaveBtn) subSaveBtn.disabled = true;
+            });
+        });
+        const importModal = $('#import-modal');
+        if (importModal) {
+            importModal.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' || e.isComposing || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+                const target = e.target;
+                if (!target || target.tagName !== 'INPUT' || target.type === 'checkbox' || target.type === 'file') return;
+                const onSubscription = subSaveBtn && subSaveBtn.style.display !== 'none';
+                const checkBtn = onSubscription ? subPreviewBtn : importParseBtn;
+                const addBtn = onSubscription ? subSaveBtn : importSaveBtn;
+                e.preventDefault();
+                if (addBtn && !addBtn.disabled) addBtn.click();
+                else if (checkBtn && !checkBtn.disabled) checkBtn.click();
+            });
         }
         
         // Auto-update checkbox toggle for interval

@@ -225,13 +225,6 @@
                 </svg>
                 <span data-i18n="tab.domains">Domains</span>
             </button>
-            <button class="tab" data-tab="subnets">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <path d="M12 2v20M2 12h20"/>
-                </svg>
-                <span data-i18n="tab.subnets">IP Subnets</span>
-            </button>
             <div class="tab-separator"></div>
             <button class="tab" data-tab="server">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -538,9 +531,10 @@
             <section id="tab-domains" class="tab-content">
                 <div class="section">
                     <div class="section-header">
-                        <h2 data-i18n="domains.title">Domain Routing</h2>
+                        <h2 data-i18n="lists.tabTitle">Domains and subnets</h2>
                         <div class="section-actions">
                             <span class="stats" id="domains-stats">TCP+UDP: — | UDP-only: —</span>
+                            <span class="stats" id="subnets-stats">TCP+UDP: — | UDP-only: —</span>
                             <button class="btn btn-sm btn-secondary" id="ipset-view-btn" data-i18n-title="ipset.viewTitle">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
@@ -551,17 +545,75 @@
                         </div>
                     </div>
                     
+                    <!-- FEAT-011 / B19: list sync tile, at the top of the tab -->
+                    <div class="auto-update-tile" id="lists-auto-update-tile-domains">
+                        <div class="auto-update-header">
+                            <div class="auto-update-toggle">
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="lists-auto-update-checkbox-domains" checked>
+                                    <span class="checkbox-label-text" data-i18n="autoupdate.checkbox">Automatic domain and subnet list supplementation</span>
+                                </label>
+                                <span class="auto-update-loader hidden" id="lists-update-loader-domains">
+                                    <svg class="spinner" viewBox="0 0 24 24" width="16" height="16">
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/>
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="auto-update-actions">
+                                <button class="btn btn-sm btn-secondary" id="lists-view-btn-domains" data-i18n-title="autoupdate.viewFiles">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+                                <button class="btn btn-sm btn-secondary" id="lists-refresh-btn-domains" data-i18n-title="autoupdate.updateNow">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="auto-update-info">
+                            <span class="auto-update-source"><span data-i18n="autoupdate.source">Source</span>: <span id="lists-source-display-domains" class="lists-source-url">—</span></span>
+                            <span class="auto-update-separator">•</span>
+                            <span class="auto-update-interval">
+                                <span data-i18n="autoupdate.interval">Interval</span>: 
+                                <select id="lists-interval-select-domains" class="select-inline">
+                                    <option value="3" data-i18n="autoupdate.hours3">3 hours</option>
+                                    <option value="6" data-i18n="autoupdate.hours6">6 hours</option>
+                                    <option value="12" data-i18n="autoupdate.hours12">12 hours</option>
+                                    <option value="24" selected data-i18n="autoupdate.hours24">24 hours</option>
+                                </select>
+                            </span>
+                            <br>
+                            <span class="auto-update-schedule" id="lists-schedule-hint-domains"></span>
+                            <span class="auto-update-separator">•</span>
+                            <span class="auto-update-last" id="lists-last-update-domains"><span data-i18n="autoupdate.lastUpdate">Last update</span>: —</span>
+                        </div>
+                        <div class="auto-update-footer">
+                            <button class="btn btn-sm btn-secondary" id="lists-transfer-btn-domains" data-i18n-title="autoupdate.transferToLocalTitle">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <path d="M3 3h18v6H3z"/>
+                                    <path d="M12 12v9"/>
+                                    <polyline points="8 17 12 21 16 17"/>
+                                </svg>
+                                <span data-i18n="autoupdate.transferToLocal">Transfer to local lists</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- B1: lists for the Direct primary / VPN primary modes (mode tab shared with Subnets tab) -->
-                    <p class="section-description list-lead" data-i18n-html="lists.leadDomains">Here are the domain lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.</p>
+                    <p class="section-description list-lead" data-i18n-html="lists.leadBoth">Here are the domain lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.</p>
 
                     <div class="list-mode-tabs" role="tablist">
                         <button type="button" class="list-mode-tab active" role="tab" data-list-mode="split" aria-selected="true">
                             <span class="list-mode-name" data-i18n="lists.modeSplit">Direct primary</span>
-                            <span class="list-mode-what" data-i18n="lists.modeSplitWhat">these sites go through VPN</span>
+                            <span class="list-mode-what" data-i18n="lists.modeSplitWhatBoth">these sites and addresses go through VPN</span>
                         </button>
                         <button type="button" class="list-mode-tab" role="tab" data-list-mode="vpnprimary" aria-selected="false">
                             <span class="list-mode-name" data-i18n="lists.modeVpnPrimary">VPN primary</span>
-                            <span class="list-mode-what" data-i18n="lists.modeVpnPrimaryWhat">these sites go direct</span>
+                            <span class="list-mode-what" data-i18n="lists.modeVpnPrimaryWhatBoth">these sites and addresses go direct</span>
                         </button>
                     </div>
 
@@ -581,22 +633,12 @@
                             <span class="list-mode-hint" id="list-other-hint-domains"></span>
                         </div>
 
-                        <!-- Domain type subtabs -->
-                        <nav class="subtabs">
-                            <button class="subtab active" data-subtab="domains-tcpudp">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                                    <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
-                                </svg>
-                                <span data-i18n="subtab.tcpudp">TCP + UDP</span>
-                            </button>
-                            <button class="subtab" data-subtab="domains-udponly">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <path d="M8 12h8M12 8v8"/>
-                                </svg>
-                                <span data-i18n="subtab.udponly">UDP-only</span>
-                            </button>
+                        <!-- B25: domains and subnets in one row of tabs -->
+                        <nav class="subtabs lists-subtabs">
+                            <button class="subtab active" data-subtab="domains-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.domainsTcpUdp">Domains</span></button>
+                            <button class="subtab" data-subtab="domains-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.domainsUdp">Domains UDP</span></button>
+                            <button class="subtab" data-subtab="subnets-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.subnetsTcpUdp">Subnets</span></button>
+                            <button class="subtab" data-subtab="subnets-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.subnetsUdp">Subnets UDP</span></button>
                         </nav>
                     
                         <!-- TCP+UDP domains -->
@@ -683,132 +725,8 @@
                             <div class="list-overlap-warning hidden" id="domains-overlap-udponly" role="status"></div>
                         </div>
 
-                        <p class="list-mode-hint" data-i18n="lists.bothListsHint">If the same site is in both lists, it always goes through VPN.</p>
-                        <div class="list-swap">
-                            <button type="button" class="list-swap-btn" data-i18n="lists.swapLists">Swap the lists</button>
-                        </div>
-                    </div>
-
-                    <!-- FEAT-011: Auto-update tile -->
-                    <div class="auto-update-tile" id="lists-auto-update-tile-domains">
-                        <div class="auto-update-header">
-                            <div class="auto-update-toggle">
-                                <label class="checkbox-inline">
-                                    <input type="checkbox" id="lists-auto-update-checkbox-domains" checked>
-                                    <span class="checkbox-label-text" data-i18n="autoupdate.checkbox">Automatic domain and subnet list supplementation</span>
-                                </label>
-                                <span class="auto-update-loader hidden" id="lists-update-loader-domains">
-                                    <svg class="spinner" viewBox="0 0 24 24" width="16" height="16">
-                                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/>
-                                    </svg>
-                                </span>
-                            </div>
-                            <div class="auto-update-actions">
-                                <button class="btn btn-sm btn-secondary" id="lists-view-btn-domains" data-i18n-title="autoupdate.viewFiles">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                        <circle cx="12" cy="12" r="3"/>
-                                    </svg>
-                                </button>
-                                <button class="btn btn-sm btn-secondary" id="lists-refresh-btn-domains" data-i18n-title="autoupdate.updateNow">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                        <path d="M23 4v6h-6M1 20v-6h6"/>
-                                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="auto-update-info">
-                            <span class="auto-update-source"><span data-i18n="autoupdate.source">Source</span>: <span id="lists-source-display-domains" class="lists-source-url">—</span></span>
-                            <span class="auto-update-separator">•</span>
-                            <span class="auto-update-interval">
-                                <span data-i18n="autoupdate.interval">Interval</span>: 
-                                <select id="lists-interval-select-domains" class="select-inline">
-                                    <option value="3" data-i18n="autoupdate.hours3">3 hours</option>
-                                    <option value="6" data-i18n="autoupdate.hours6">6 hours</option>
-                                    <option value="12" data-i18n="autoupdate.hours12">12 hours</option>
-                                    <option value="24" selected data-i18n="autoupdate.hours24">24 hours</option>
-                                </select>
-                            </span>
-                            <br>
-                            <span class="auto-update-schedule" id="lists-schedule-hint-domains"></span>
-                            <span class="auto-update-separator">•</span>
-                            <span class="auto-update-last" id="lists-last-update-domains"><span data-i18n="autoupdate.lastUpdate">Last update</span>: —</span>
-                        </div>
-                        <div class="auto-update-footer">
-                            <button class="btn btn-sm btn-secondary" id="lists-transfer-btn-domains" data-i18n-title="autoupdate.transferToLocalTitle">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                                    <path d="M3 3h18v6H3z"/>
-                                    <path d="M12 12v9"/>
-                                    <polyline points="8 17 12 21 16 17"/>
-                                </svg>
-                                <span data-i18n="autoupdate.transferToLocal">Transfer to local lists</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- IP Subnets Tab -->
-            <section id="tab-subnets" class="tab-content">
-                <div class="section">
-                    <div class="section-header">
-                        <h2 data-i18n="subnets.title">IP Subnet Routing</h2>
-                        <div class="section-actions">
-                            <span class="stats" id="subnets-stats">TCP+UDP: — | UDP-only: —</span>
-                        </div>
-                    </div>
-                    
-                    <!-- B1: lists for the Direct primary / VPN primary modes (mode tab shared with Domains tab) -->
-                    <p class="section-description list-lead" data-i18n-html="lists.leadSubnets">Here are the subnet lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.</p>
-
-                    <div class="list-mode-tabs" role="tablist">
-                        <button type="button" class="list-mode-tab active" role="tab" data-list-mode="split" aria-selected="true">
-                            <span class="list-mode-name" data-i18n="lists.modeSplit">Direct primary</span>
-                            <span class="list-mode-what" data-i18n="lists.modeSplitWhatSubnets">these addresses go through VPN</span>
-                        </button>
-                        <button type="button" class="list-mode-tab" role="tab" data-list-mode="vpnprimary" aria-selected="false">
-                            <span class="list-mode-name" data-i18n="lists.modeVpnPrimary">VPN primary</span>
-                            <span class="list-mode-what" data-i18n="lists.modeVpnPrimaryWhatSubnets">these addresses go direct</span>
-                        </button>
-                    </div>
-
-                    <!-- Panel of the selected mode: editors work on listBinding[mode] -->
-                    <div class="list-mode-panel" id="list-mode-panel-subnets" data-mode="split" role="tabpanel">
-                        <p class="list-mode-rule" id="list-mode-rule-subnets"></p>
-                        <div class="list-mode-row">
-                            <span class="list-mode-label" data-i18n="lists.inModeNow">In this mode now</span>
-                            <span class="list-mode-nets" id="list-mode-nets-subnets">—</span>
-                        </div>
-                        <div class="list-mode-row">
-                            <label class="list-mode-label" for="list-binding-select-subnets" data-i18n="lists.whichList">Which list to use</label>
-                            <select id="list-binding-select-subnets" class="list-binding-select">
-                                <option value="world">ruunblockdomains</option>
-                                <option value="russia">ruservices</option>
-                            </select>
-                            <span class="list-mode-hint" id="list-other-hint-subnets"></span>
-                        </div>
-
-                        <!-- Subnet type subtabs -->
-                        <nav class="subtabs" id="subnets-subtabs">
-                            <button class="subtab active" data-subtab="subnets-tcpudp">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                                    <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
-                                </svg>
-                                <span data-i18n="subtab.tcpudp">TCP + UDP</span>
-                            </button>
-                            <button class="subtab" data-subtab="subnets-udponly">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <path d="M8 12h8M12 8v8"/>
-                                </svg>
-                                <span data-i18n="subtab.udponly">UDP-only</span>
-                            </button>
-                        </nav>
-                    
                         <!-- TCP+UDP subnets -->
-                        <div id="subtab-subnets-tcpudp" class="subtab-content active">
+                        <div id="subtab-subnets-tcpudp" class="subtab-content hidden">
                             <!-- B1: text follows the selected mode (updateListModeUI) -->
                             <p class="section-description" id="subnets-desc-tcpudp">All traffic to these addresses goes through VPN.</p>
                         
@@ -890,6 +808,56 @@
                             <input type="file" id="subnets-file-udponly" class="hidden" accept=".txt,.list">
                             <div class="list-overlap-warning hidden" id="subnets-overlap-udponly" role="status"></div>
                         </div>
+
+                        <p class="list-mode-hint" data-i18n="lists.bothListsHintBoth">If the same site or address is in both lists, it always goes through VPN.</p>
+                        <div class="list-swap">
+                            <button type="button" class="list-swap-btn" data-i18n="lists.swapLists">Swap the lists</button>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- B25: former IP Subnets tab — no tab button any more; kept hidden for the shared list JS -->
+            <section id="tab-subnets" class="tab-content" hidden>
+                <div class="section">
+                    <div class="section-header">
+                        <h2 data-i18n="subnets.title">IP Subnet Routing</h2>
+                        <div class="section-actions">
+                        </div>
+                    </div>
+                    
+                    <!-- B1: lists for the Direct primary / VPN primary modes (mode tab shared with Domains tab) -->
+                    <p class="section-description list-lead" data-i18n-html="lists.leadSubnets">Here are the subnet lists for the Direct primary and VPN primary modes. The mode of each network is set on the main page, in the <a href="#routing-tile" class="list-segments-link" data-goto-segments>“Segments”</a> section.</p>
+
+                    <div class="list-mode-tabs" role="tablist">
+                        <button type="button" class="list-mode-tab active" role="tab" data-list-mode="split" aria-selected="true">
+                            <span class="list-mode-name" data-i18n="lists.modeSplit">Direct primary</span>
+                            <span class="list-mode-what" data-i18n="lists.modeSplitWhatSubnets">these addresses go through VPN</span>
+                        </button>
+                        <button type="button" class="list-mode-tab" role="tab" data-list-mode="vpnprimary" aria-selected="false">
+                            <span class="list-mode-name" data-i18n="lists.modeVpnPrimary">VPN primary</span>
+                            <span class="list-mode-what" data-i18n="lists.modeVpnPrimaryWhatSubnets">these addresses go direct</span>
+                        </button>
+                    </div>
+
+                    <!-- Panel of the selected mode: editors work on listBinding[mode] -->
+                    <div class="list-mode-panel" id="list-mode-panel-subnets" data-mode="split" role="tabpanel">
+                        <p class="list-mode-rule" id="list-mode-rule-subnets"></p>
+                        <div class="list-mode-row">
+                            <span class="list-mode-label" data-i18n="lists.inModeNow">In this mode now</span>
+                            <span class="list-mode-nets" id="list-mode-nets-subnets">—</span>
+                        </div>
+                        <div class="list-mode-row">
+                            <label class="list-mode-label" for="list-binding-select-subnets" data-i18n="lists.whichList">Which list to use</label>
+                            <select id="list-binding-select-subnets" class="list-binding-select">
+                                <option value="world">ruunblockdomains</option>
+                                <option value="russia">ruservices</option>
+                            </select>
+                            <span class="list-mode-hint" id="list-other-hint-subnets"></span>
+                        </div>
+
+                    
 
                         <p class="list-mode-hint" data-i18n="lists.bothListsHintSubnets">If the same address is in both lists, it always goes through VPN.</p>
                         <div class="list-swap">
