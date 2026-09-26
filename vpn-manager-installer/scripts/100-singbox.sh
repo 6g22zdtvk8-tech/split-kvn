@@ -79,6 +79,16 @@ ECHO_WINDOW=15
         fi
     fi
 
+    # A firmware reload that the quick restore fully repaired: our chains, the way into
+    # the tunnel and the DNS redirects are back, and the interfaces are the ones the last
+    # build saw. The full rebuild would only redo the same rules for 3-4 s — and a router
+    # whose provider hands out 5-minute DHCP leases gets such a reload every 2.5 min (26.09).
+    if [ "$WAS_INTACT" = no ] && /opt/etc/init.d/S98singbox-rules all-ok >/dev/null 2>&1; then
+        logger -t singbox-netfilter "Keenetic netfilter event, rules put back in place, no rebuild needed" 2>/dev/null
+        date +%s > "$LASTFILE" 2>/dev/null
+        exit 0
+    fi
+
     # Mark that a netfilter change happened and still needs to be applied.
     : > "$DIRTYFILE" 2>/dev/null
 

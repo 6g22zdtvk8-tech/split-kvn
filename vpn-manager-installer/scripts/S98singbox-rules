@@ -646,6 +646,10 @@ apply_ipv6_from_config() {
 # step before its pause. The full rebuild still follows.
 MANGLE_SNAPSHOT=/tmp/singbox-mangle.rules
 MANGLE6_SNAPSHOT=/tmp/singbox-mangle6.rules
+# DNS redirects the last build made ("4 br0", "6 br0", ...) and the interfaces it saw:
+# lets a firmware reload be repaired in place instead of a full rebuild (26.09)
+DNSREDIR_SNAPSHOT=/tmp/singbox-dnsredir.list
+IFSET_SNAPSHOT=/tmp/singbox-ifset
 
 # Our chains and their PREROUTING jumps as an iptables-restore file (no *_NEW, no counters)
 # Usage: save_mangle_snapshot iptables-save|ip6tables-save <file>
@@ -693,6 +697,64 @@ tun_passage_restore() {
     done
     [ $n -gt 0 ] && logger -t singbox-rules "quick-restore: tunnel passage back after a firmware reload ($n rules)"
     echo $n
+}
+
+# Interfaces our rules are built for; a different set means a real change, not a reload
+current_ifset() {
+    { get_all_bridge_interfaces; for i in $(detect_vpn_server_interfaces); do echo $i; done; } | sort -u | tr '\n' ' '
+}
+
+save_dnsredir_snapshot() {
+    local tmp="$DNSREDIR_SNAPSHOT.tmp.$$" f ifc ipt
+    : > "$tmp"
+    for ifc in $(get_all_bridge_interfaces) $VPN_SERVER_IFS; do
+        for f in 4 6; do
+            if [ $f = 4 ]; then ipt=iptables; else ipt=ip6tables; command -v ip6tables >/dev/null 2>&1 || continue; fi
+            $ipt -w -t nat -C PREROUTING -i $ifc -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null && echo "$f $ifc" >> "$tmp"
+        done
+    done
+    mv "$tmp" "$DNSREDIR_SNAPSHOT"
+    current_ifset > "$IFSET_SNAPSHOT"
+}
+
+# Put back the DNS redirects to dnsmasq a firmware reload dropped. Prints how many.
+dnsredir_restore() {
+    local f ifc ipt p n=0
+    [ -s "$DNSREDIR_SNAPSHOT" ] || { echo 0; return; }
+    while read -r f ifc; do
+        [ $f = 6 ] && ipt=ip6tables || ipt=iptables
+        for p in udp tcp; do
+            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+                { $ipt -w -t nat -I PREROUTING 1 -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null && n=$((n + 1)); }
+        done
+    done < "$DNSREDIR_SNAPSHOT"
+    [ $n -gt 0 ] && logger -t singbox-rules "quick-restore: DNS redirects back after a firmware reload ($n rules)"
+    echo $n
+}
+
+# Everything a firmware reload wipes is back and nothing else changed: the netfilter
+# hook may skip the full rebuild. Anything unknown means "rebuild".
+all_in_place() {
+    [ -s "$MANGLE_SNAPSHOT" ] && [ -s "$DNSREDIR_SNAPSHOT" ] && [ -s "$IFSET_SNAPSHOT" ] || return 1
+    iptables -w -t mangle -S SING_BOX_MARK >/dev/null 2>&1 || return 1
+    if command -v ip6tables >/dev/null 2>&1 && [ -s "$MANGLE6_SNAPSHOT" ]; then
+        ip6tables -w -t mangle -S SING_BOX6_MARK >/dev/null 2>&1 || return 1
+    fi
+    tun_passage_ok || return 1
+    if command -v ip6tables >/dev/null 2>&1 && [ -s "$MANGLE6_SNAPSHOT" ]; then
+        ip6tables -w -C FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null &&
+        ip6tables -w -C FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null &&
+        ip6tables -w -t nat -C POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null || return 1
+    fi
+    local f ifc ipt p
+    while read -r f ifc; do
+        [ $f = 6 ] && ipt=ip6tables || ipt=iptables
+        for p in udp tcp; do
+            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || return 1
+        done
+    done < "$DNSREDIR_SNAPSHOT"
+    [ "$(current_ifset)" = "$(cat "$IFSET_SNAPSHOT" 2>/dev/null)" ] || return 1
+    return 0
 }
 
 tun_passage_ok() {
@@ -1113,7 +1175,9 @@ start() {
     echo "  IPv4 DNS redirect: OK"
     
     # Copy of our chains for the quick restore after a firmware reload (B12)
-    save_mangle_snapshot iptables-save $MANGLE_SNAPSHOT
+    save_dnsredir_snapshot
+    # No fresh copy of the chains: never let the hook skip a rebuild on an old one
+    save_mangle_snapshot iptables-save $MANGLE_SNAPSHOT || rm -f "$DNSREDIR_SNAPSHOT"
     command -v ip6tables-save >/dev/null 2>&1 && save_mangle_snapshot ip6tables-save $MANGLE6_SNAPSHOT
     
     # =========================================================================
@@ -1386,7 +1450,7 @@ load_subnets() {
 # }
 
 stop() {
-    rm -f $MANGLE_SNAPSHOT $MANGLE6_SNAPSHOT
+    rm -f $MANGLE_SNAPSHOT $MANGLE6_SNAPSHOT $DNSREDIR_SNAPSHOT $IFSET_SNAPSHOT
     echo "=== sing-box rules stop ==="
     rules_lock
     
@@ -1621,6 +1685,12 @@ case "$1" in
         command -v ip6tables >/dev/null 2>&1 && quick_restore ip6tables ip6tables-restore $MANGLE6_SNAPSHOT SING_BOX6_MARK
         # and the way into the tunnel, which lives outside our own chains
         ip link show $TUN_INTERFACE >/dev/null 2>&1 && tun_passage_restore >/dev/null
+        dnsredir_restore >/dev/null
+        ;;
+    all-ok)
+        # For the netfilter hook: 0 when the quick restore left nothing for a full rebuild
+        all_in_place
+        exit $?
         ;;
     passage-ok)
         # For the netfilter hook: 0 when the FORWARD/nat lines to the tunnel are in place
