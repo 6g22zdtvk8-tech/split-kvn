@@ -1,0 +1,18 @@
+{
+  "id": "example",
+  "name": "Пример конфигурации",
+  "server": "example.com",
+  "server_port": 8388,
+  "local_address": "0.0.0.0",
+  "local_port": 1181,
+  "password": "",
+  "method": "chacha20-ietf-poly1305",
+  "timeout": 300,
+  "fast_open": false,
+  "plugin": "",
+  "plugin_opts": "",
+  "enabled": false,
+  "created_at": "",
+  "updated_at": ""
+}
+

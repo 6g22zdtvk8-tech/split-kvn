@@ -1,0 +1,99 @@
+#!/bin/sh
+# DoT stub (stubby) for dnsmasq upstream fallback — only active in dot mode
+
+export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+
+# Resolve the binary rather than assuming /opt/sbin: on Keenetic stubby ships with
+# the firmware in /usr/sbin, so the Entware package may be absent. The old hardcoded
+# path made start() fail silently — command -v found the firmware binary and passed
+# the guard, then exec of /opt/sbin/stubby hit a missing file.
+STUBBY_BIN="$(command -v stubby 2>/dev/null)"
+[ -n "$STUBBY_BIN" ] || STUBBY_BIN="/opt/sbin/stubby"
+STUBBY_CONF="/opt/etc/vpn-manager/stubby.yml"
+
+# stubby validates upstream certificates through OpenSSL, which looks for a trust
+# store at its compiled-in default path. Some Keenetic firmwares ship no
+# /etc/ssl/certs/ca-certificates.crt, and then every upstream is rejected with
+# "self-signed certificate in certificate chain" — tls_authentication is REQUIRED,
+# so stubby ends up with no usable transport and answers nothing while still
+# holding the listen port. stubby 0.4.0 has no tls_ca_file config key (adding one
+# makes the YAML fail to parse), so the environment is the only lever.
+if [ -z "$SSL_CERT_FILE" ] && [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then
+    for ca in /opt/etc/ssl/certs/ca-certificates.crt /opt/etc/ssl/cert.pem; do
+        if [ -f "$ca" ]; then
+            SSL_CERT_FILE="$ca"
+            export SSL_CERT_FILE
+            break
+        fi
+    done
+fi
+PIDFILE="/opt/var/run/stubby-vpn.pid"
+DESC="DNS DoT stub (stubby)"
+
+start() {
+    [ -f "$STUBBY_CONF" ] || return 0
+    command -v stubby >/dev/null 2>&1 || return 0
+
+    killall stubby 2>/dev/null || true
+    rm -f "$PIDFILE"
+
+    # getdns opens upstream connections with TCP Fast Open and has no setting to
+    # turn it off. On the way to the Google servers TFO connections are dropped
+    # (a plain connection works), so stubby hangs on them, the 10-minute watchdog
+    # restarts it and DoT for the VPN lists goes off again. Client TFO is switched
+    # off router-wide: it touches only the router's own outgoing connections.
+    # Runs at boot too, so the setting survives a reboot.
+    echo 0 > /proc/sys/net/ipv4/tcp_fastopen 2>/dev/null
+
+    mkdir -p /opt/var/lib/stubby
+    echo "Starting $DESC..."
+    $STUBBY_BIN -C "$STUBBY_CONF" -g >/dev/null 2>&1 &
+    echo $! > "$PIDFILE"
+
+    # -g detaches, so the process needs a moment to appear. A single one-second
+    # check reported failure while stubby was in fact coming up fine.
+    i=0
+    while [ "$i" -lt 5 ]; do
+        sleep 1
+        if pidof stubby >/dev/null 2>&1; then
+            echo "$DESC started"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    echo "$DESC failed to start"
+    rm -f "$PIDFILE"
+    return 1
+}
+
+stop() {
+    if killall stubby 2>/dev/null; then
+        echo "$DESC stopped"
+    fi
+    rm -f "$PIDFILE"
+    return 0
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if pidof stubby >/dev/null 2>&1; then
+        echo "$DESC running (pid $(pidof stubby | cut -d' ' -f1))"
+        return 0
+    fi
+    echo "$DESC stopped"
+    return 1
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) restart ;;
+    status)  status ;;
+    *)       echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

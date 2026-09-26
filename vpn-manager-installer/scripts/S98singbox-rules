@@ -1,0 +1,1715 @@
+#!/bin/sh
+# =============================================================================
+# sing-box TUN routing rules for Keenetic (IPv4 + IPv6)
+# Routes selected traffic into TUN interface (singbox0) via policy routing
+# Support: TCP+UDP domains, UDP-only domains, subnet routing, per-segment policies
+# Autostart: /opt/etc/init.d/S98singbox-rules
+# =============================================================================
+
+# Make sure that PATH includes required directories (for cron)
+export PATH="/opt/bin:/opt/sbin:/opt/usr/bin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+
+# -----------------------------------------------------------------------------
+# iptables/ip6tables wrappers with xtables lock wait (-w 5) when supported.
+# iptables 1.6.2+ on newer Entware: use -w to avoid "xtables lock" races with ndm.
+# iptables 1.4.x on old Keenetic: -w 5 fails ("Bad argument `5'") — fallback to plain.
+# command ... bypasses these functions to call the real binaries (no recursion).
+# -----------------------------------------------------------------------------
+_IPTABLES_WAIT=""
+if command iptables -w 5 -L -n >/dev/null 2>&1; then
+    _IPTABLES_WAIT="-w 5"
+elif command iptables -w -L -n >/dev/null 2>&1; then
+    # 1.4.20–1.6.1: -w takes no timeout but still waits for the lock
+    _IPTABLES_WAIT="-w"
+fi
+iptables() { command iptables $_IPTABLES_WAIT "$@"; }
+ip6tables() { command ip6tables $_IPTABLES_WAIT "$@"; }
+
+TUN_INTERFACE="singbox0"
+TUN_TABLE=100
+TUN_FWMARK="0x100"
+# Metric of the kill-switch blackhole in table 100; must be worse than the TUN routes (0 and 1024)
+KILLSWITCH_METRIC=4000
+
+# S99, the netfilter hook and the panel can all rebuild the mark chains at once;
+# they must not interleave on the shared *_NEW chains.
+RULES_LOCKDIR="/tmp/singbox-rules.lock.d"
+_RULES_LOCKED=0
+rules_lock() {
+    local i=0
+    # A lock older than a minute belongs to a run that died mid-way
+    if [ -d "$RULES_LOCKDIR" ] && [ -n "$(find "$RULES_LOCKDIR" -prune -mmin +1 2>/dev/null)" ]; then
+        rm -rf "$RULES_LOCKDIR"
+    fi
+    while ! mkdir "$RULES_LOCKDIR" 2>/dev/null; do
+        i=$((i + 1))
+        # Give up waiting but never steal the holder's lock
+        [ $i -ge 30 ] && { echo "  WARNING: rules lock busy, continuing without it"; return 1; }
+        sleep 1
+    done
+    _RULES_LOCKED=1
+    trap 'rules_unlock' EXIT
+    trap 'rules_unlock; exit 1' INT TERM
+}
+rules_unlock() {
+    [ "$_RULES_LOCKED" = "1" ] || return 0
+    rm -rf "$RULES_LOCKDIR" 2>/dev/null
+    _RULES_LOCKED=0
+}
+
+# Repoint every PREROUTING jump from chain $2 to chain $3: the new jump is added
+# before the old one goes, so packets always hit one of them.
+# Returns non-zero if some jump to $2 is left.
+move_mark_jumps() {
+    local ipt=$1 from=$2 to=$3 match
+    $ipt -t mangle -S PREROUTING 2>/dev/null | grep -- "-j $from\$" | while read -r match; do
+        match=${match#-A PREROUTING }
+        match=${match% -j $from}
+        { $ipt -t mangle -C PREROUTING $match -j "$to" 2>/dev/null || \
+            $ipt -t mangle -A PREROUTING $match -j "$to"; } && \
+            $ipt -t mangle -D PREROUTING $match -j "$from"
+    done
+    ! $ipt -t mangle -S PREROUTING 2>/dev/null | grep -q -- "-j $from\$"
+}
+
+# Get an empty ${2}_NEW to build into. A failed earlier swap may have left the live
+# chain under the _NEW name; it is given back its name first instead of being flushed.
+# Usage: prepare_mark_chain iptables|ip6tables <chain>
+prepare_mark_chain() {
+    local ipt=$1 chain=$2 new="${2}_NEW"
+    if $ipt -t mangle -S PREROUTING 2>/dev/null | grep -q -- "-j $new\$"; then
+        if $ipt -t mangle -L "$chain" -n >/dev/null 2>&1; then
+            move_mark_jumps $ipt "$new" "$chain"
+        else
+            $ipt -t mangle -E "$new" "$chain"
+        fi || { echo "  WARNING: $new is live and could not be released"; return 1; }
+    fi
+    $ipt -t mangle -N "$new" 2>/dev/null || $ipt -t mangle -F "$new"
+}
+
+# Put chain ${2}_NEW in place of $2, then let it take over the name.
+# Usage: swap_mark_chain iptables|ip6tables <chain>
+swap_mark_chain() {
+    local ipt=$1 chain=$2 new="${2}_NEW"
+    if $ipt -t mangle -L "$chain" -n >/dev/null 2>&1; then
+        if ! move_mark_jumps $ipt "$chain" "$new"; then
+            echo "  WARNING: $chain still referenced, kept alongside $new"
+            return 1
+        fi
+        $ipt -t mangle -F "$chain"
+        $ipt -t mangle -X "$chain" || { echo "  WARNING: could not delete $chain"; return 1; }
+    fi
+    $ipt -t mangle -E "$new" "$chain" || { echo "  WARNING: could not rename $new to $chain"; return 1; }
+}
+
+# Remove jumps from interface $2 to mark chains other than $3 (after a policy change).
+# Usage: drop_mark_jumps iptables|ip6tables <iface> <chain to keep, or "">
+drop_mark_jumps() {
+    local ipt=$1 ifc=$2 keep=$3 c
+    case "$ipt" in
+        ip6tables) set -- SING_BOX6_MARK SING_BOX6_MARK_FULL SING_BOX6_MARK_VPNP ;;
+        *) set -- SING_BOX_MARK SING_BOX_MARK_FULL SING_BOX_MARK_VPNP ;;
+    esac
+    for c in "$@"; do
+        [ "$c" = "$keep" ] && continue
+        while $ipt -t mangle -D PREROUTING -i "$ifc" -j "$c" 2>/dev/null; do :; done
+    done
+}
+
+# --- List sets (B1) -----------------------------------------------------------
+# "world" = the original lists (vpn_* ipsets), "russia" = direct_* ipsets (direct-lists.sh).
+# Prints the ipsets of set $1 for IPv4 ($2 empty) or IPv6 ($2 = 6):
+# <domains> <domains UDP-only> <subnets> <subnets UDP-only>
+set_ipsets() {
+    case "$1:$2" in
+        russia:6) echo "direct_domains6 direct_domains6_udp direct_subnets6 direct_subnets6_udp" ;;
+        russia:*) echo "direct_domains direct_domains_udp direct_subnets direct_subnets_udp" ;;
+        *:6)      echo "vpn_domains6 vpn_domains6_udp vpn_subnets6 vpn_subnets6_udp" ;;
+        *)        echo "vpn_domains vpn_domains_udp vpn_subnets vpn_subnets_udp" ;;
+    esac
+}
+
+# Which set a split mode uses: "split" (Direct primary) sends its set via VPN,
+# "vpnprimary" sends its set direct. settings.json list_binding, defaults world / russia.
+list_binding() {
+    local v=$(jq -r --arg m "$1" '.list_binding[$m] // empty' "$SETTINGS_FILE" 2>/dev/null)
+    case "$v" in
+        world|russia) echo "$v" ;;
+        *) if [ "$1" = "vpnprimary" ]; then echo russia; else echo world; fi ;;
+    esac
+}
+
+# Mark a set for the tunnel. The four sets come as set_ipsets prints them:
+# <domains> <domains UDP-only> <subnets> <subnets UDP-only> — the UDP-only ones
+# mark UDP only, their TCP goes the default way (B11: before, TCP went too).
+# Usage: mark_set_rules <ipt> <chain> <4 ipsets>
+mark_set_rules() {
+    local ipt=$1 ch=$2
+    $ipt -t mangle -A "$ch" -m set --match-set "$3" dst -j MARK --set-mark $TUN_FWMARK
+    $ipt -t mangle -A "$ch" -p udp -m set --match-set "$4" dst -j MARK --set-mark $TUN_FWMARK
+    $ipt -t mangle -A "$ch" -m set --match-set "$5" dst -j MARK --set-mark $TUN_FWMARK
+    $ipt -t mangle -A "$ch" -p udp -m set --match-set "$6" dst -j MARK --set-mark $TUN_FWMARK
+}
+
+# Let a set bypass the tunnel in a VPN-primary chain; for UDP-only sets only UDP
+# bypasses, their TCP stays in the tunnel. Usage: return_set_rules <ipt> <chain> <4 ipsets>
+return_set_rules() {
+    local ipt=$1 ch=$2
+    $ipt -t mangle -A "$ch" -m set --match-set "$3" dst -j RETURN
+    $ipt -t mangle -A "$ch" -m set --match-set "$5" dst -j RETURN
+    $ipt -t mangle -A "$ch" -p udp -m set --match-set "$4" dst -j RETURN
+    $ipt -t mangle -A "$ch" -p udp -m set --match-set "$6" dst -j RETURN
+}
+
+# ipset for TCP+UDP domains
+IPSET_TCPUDP="vpn_domains"
+IPSET6_TCPUDP="vpn_domains6"
+
+# ipset for UDP-only domains
+IPSET_UDPONLY="vpn_domains_udp"
+IPSET6_UDPONLY="vpn_domains6_udp"
+
+# ipset for IP-subnets (CIDR) - TCP+UDP
+IPSET_SUBNETS="vpn_subnets"
+IPSET6_SUBNETS="vpn_subnets6"
+
+# ipset for IP-subnets (CIDR) - UDP-only
+IPSET_SUBNETS_UDP="vpn_subnets_udp"
+IPSET6_SUBNETS_UDP="vpn_subnets6_udp"
+
+# ipset for devices (by src IP) — DISABLED: does not work correctly with PSN and etc.
+# IPSET_DEVICES="vpn_devices"
+
+# VPN servers excluded from marking (routing-loop guard). Filled from the active
+# sing-box config below; add fixed addresses here only if a server is not in it.
+VPN_SERVERS=""
+# VPN servers IPv6 (if any)
+VPN_SERVERS6=""
+
+# B9: addresses of every server in the configs (subscriptions included), resolved from
+# their names — traffic to them never goes into the tunnel. VPN_SERVERS above only
+# knows servers written as numbers; most are written as names.
+IPSET_SERVERS="vpn_servers"
+IPSET6_SERVERS="vpn_servers6"
+
+# directory VPN Manager
+VPN_MANAGER_HOME="/opt/etc/vpn-manager"
+
+# Configuration files
+# DEVICES_FILE="$VPN_MANAGER_HOME/device-routing.json"  # DISABLED
+SUBNETS_FILE="$VPN_MANAGER_HOME/vpn-subnets.txt"
+SUBNETS_UDP_FILE="$VPN_MANAGER_HOME/vpn-subnets-udp.txt"
+SINGBOX_CONFIG="/opt/etc/sing-box/config.json"
+ROUTING_POLICIES_FILE="$VPN_MANAGER_HOME/routing_policies.json"
+SETTINGS_FILE="$VPN_MANAGER_HOME/settings.json"
+
+# FEAT-011: Remote lists (downloaded automatically)
+REMOTE_LISTS_DIR="$VPN_MANAGER_HOME/remote-lists"
+REMOTE_SUBNETS_FILE="$REMOTE_LISTS_DIR/tcp_udp_subnets.txt"
+REMOTE_SUBNETS_UDP_FILE="$REMOTE_LISTS_DIR/udp_subnets.txt"
+REMOTE_DOMAINS_FILE="$REMOTE_LISTS_DIR/tcp_udp_domains.txt"
+REMOTE_DOMAINS_UDP_FILE="$REMOTE_LISTS_DIR/udp_domains.txt"
+
+# Keenetic RCI API (port 79) — fast HTTP alternative to ndmc CLI
+RCI_URL="http://127.0.0.1:79/rci"
+
+# Execute ndmc command with timeout (BusyBox-compatible).
+# Prevents script from hanging if ndmc enters D-state.
+ndmc_with_timeout() {
+    local cmd="$1"
+    local max_wait="${2:-15}"
+    ndmc -c "$cmd" &
+    local pid=$!
+    local i=0
+    while [ $i -lt $max_wait ]; do
+        if ! kill -0 $pid 2>/dev/null; then
+            wait $pid
+            return $?
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -9 $pid 2>/dev/null
+    wait $pid 2>/dev/null
+    echo "(ndmc timed out after ${max_wait}s: $cmd)" >&2
+    return 1
+}
+
+# Query Keenetic: try RCI API first (fast, ~200ms), fallback to ndmc (slow, ~5-10s).
+# Usage: keenetic_show "show/interface" "show interface"
+keenetic_show() {
+    local rci_path="$1"
+    local ndmc_cmd="$2"
+    local result
+    
+    result=$(curl -s --connect-timeout 2 --max-time 5 "$RCI_URL/$rci_path" 2>/dev/null)
+    if [ -n "$result" ]; then
+        echo "$result"
+        return 0
+    fi
+    
+    ndmc_with_timeout "$ndmc_cmd" 15
+}
+
+# Execute Keenetic config command: try RCI POST first, fallback to ndmc.
+# Usage: keenetic_cmd "interface ISP ipv6 address auto"
+keenetic_cmd() {
+    local cmd="$1"
+    local result
+    
+    result=$(curl -s --connect-timeout 2 --max-time 5 -X POST "$RCI_URL/" \
+        -H "Content-Type: application/json" \
+        -d "[{\"parse\": \"$cmd\"}]" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$result" ]; then
+        return 0
+    fi
+    
+    ndmc_with_timeout "$cmd" 15
+}
+
+# Check enabled whether auto-update lists
+is_auto_update_enabled() {
+    if [ -f "$SETTINGS_FILE" ]; then
+        # Correct check: jq '// true' treats false "falsy"
+        local enabled=$(jq 'if .auto_update_lists == null then true else .auto_update_lists end' "$SETTINGS_FILE" 2>/dev/null)
+        [ "$enabled" = "true" ]
+    else
+        return 0  # By default enabled
+    fi
+}
+
+# Get merged list (local + remote)
+get_merged_list() {
+    local local_file="$1"
+    local remote_file="$2"
+    
+    {
+        [ -f "$local_file" ] && cat "$local_file"
+        if is_auto_update_enabled && [ -f "$remote_file" ]; then
+            cat "$remote_file"
+        fi
+    } 2>/dev/null | grep -v '^#' | grep -v '^$' | tr -d ' \t\r' | sort -u
+}
+
+# -------------------------------------------------------------------------
+# Policies routing by segmentam
+# -------------------------------------------------------------------------
+
+# Get policy for interface (direct/split/fullvpn)
+get_interface_policy() {
+    local iface="$1"
+    local default_policy="split"
+    
+    if [ ! -f "$ROUTING_POLICIES_FILE" ]; then
+        echo "$default_policy"
+        return
+    fi
+    
+    # Get global policy
+    local global=$(jq -r '.global // "split"' "$ROUTING_POLICIES_FILE" 2>/dev/null)
+    [ -z "$global" ] && global="split"
+    
+    # Get policy for specific interface
+    local policy=$(jq -r ".policies[\"$iface\"] // \"$global\"" "$ROUTING_POLICIES_FILE" 2>/dev/null)
+    [ -z "$policy" ] && policy="$global"
+    
+    echo "$policy"
+}
+
+# Get list all bridge interfaces with their policymi
+get_all_bridge_interfaces() {
+    # Returns: br0 br1 br2 ...
+    ip link show 2>/dev/null | grep -oE 'br[0-9]+' | sort -u
+}
+
+# -------------------------------------------------------------------------
+# Cache segments for web UIbut
+# -------------------------------------------------------------------------
+SEGMENTS_CACHE_FILE="$VPN_MANAGER_HOME/segments_cache.json"
+
+# Conversion maski in CIDR
+mask_to_cidr() {
+    local mask="$1"
+    local cidr=0
+    for octet in $(echo "$mask" | tr '.' ' '); do
+        case "$octet" in
+            255) cidr=$((cidr + 8)) ;;
+            254) cidr=$((cidr + 7)) ;;
+            252) cidr=$((cidr + 6)) ;;
+            248) cidr=$((cidr + 5)) ;;
+            240) cidr=$((cidr + 4)) ;;
+            224) cidr=$((cidr + 3)) ;;
+            192) cidr=$((cidr + 2)) ;;
+            128) cidr=$((cidr + 1)) ;;
+            0) ;;
+        esac
+    done
+    echo "$cidr"
+}
+
+# update cache segments (is called when start/reload and by cron)
+update_segments_cache() {
+    echo "Updating segments cache..."
+    
+    local segments_json='[]'
+    local vpn_ifs=""
+    
+    # Try RCI API first (fast, JSON), then ndmc with timeout, then ip link fallback
+    local rci_result=""
+    rci_result=$(curl -s --connect-timeout 2 --max-time 5 "$RCI_URL/show/interface" 2>/dev/null)
+    
+    if [ -n "$rci_result" ] && echo "$rci_result" | grep -q '"id"'; then
+        # RCI API returned JSON — parse bridges directly
+        echo "  Using RCI API (fast path)"
+        local bridge_ids=$(echo "$rci_result" | jq -r '.[] | select(.id | startswith("Bridge")) | .id' 2>/dev/null)
+        
+        for bridge_id in $bridge_ids; do
+            local idx=$(echo "$rci_result" | jq -r ".[] | select(.id == \"$bridge_id\") | .index" 2>/dev/null)
+            local name=$(echo "$rci_result" | jq -r ".[] | select(.id == \"$bridge_id\") | .\"interface-name\"" 2>/dev/null)
+            local desc=$(echo "$rci_result" | jq -r ".[] | select(.id == \"$bridge_id\") | .description // empty" 2>/dev/null)
+            local address=$(echo "$rci_result" | jq -r ".[] | select(.id == \"$bridge_id\") | .address // empty" 2>/dev/null)
+            local mask=$(echo "$rci_result" | jq -r ".[] | select(.id == \"$bridge_id\") | .mask // empty" 2>/dev/null)
+            
+            local bridge_dev="br$idx"
+            local subnet=""
+            if [ -n "$address" ] && [ -n "$mask" ]; then
+                local cidr=$(mask_to_cidr "$mask")
+                subnet="$address/$cidr"
+            fi
+            
+            [ -z "$desc" ] && desc="$name"
+            [ -z "$name" ] && name="$bridge_dev"
+            [ -z "$idx" ] && continue
+            
+            local wifi_ssid=""
+            local wifi_info=$(echo "$rci_result" | jq -r ".[] | select(.id | startswith(\"WifiMaster\")) | select(.group == \"$bridge_id\") | .ssid // empty" 2>/dev/null | head -1)
+            [ -n "$wifi_info" ] && wifi_ssid="$wifi_info"
+            
+            segments_json=$(echo "$segments_json" | jq \
+                --argjson idx "$idx" \
+                --arg name "$name" \
+                --arg desc "$desc" \
+                --arg bridge "$bridge_dev" \
+                --arg subnet "$subnet" \
+                --arg wifi "$wifi_ssid" \
+                '. + [{index: $idx, name: $name, description: $desc, bridge: $bridge, subnet: $subnet, wifi: $wifi}]')
+        done
+    elif command -v ndmc >/dev/null 2>&1; then
+        # Fallback: ndmc with timeout
+        echo "  RCI unavailable, using ndmc (slow path)"
+        local raw_output=$(ndmc_with_timeout 'show interface' 15)
+        
+        if [ -n "$raw_output" ] && ! echo "$raw_output" | grep -q "failed"; then
+            local bridges=$(echo "$raw_output" | grep -oE 'id: Bridge[0-9]+' | sed 's/id: //')
+            
+            for bridge_id in $bridges; do
+                local info=$(ndmc_with_timeout "show interface $bridge_id" 10)
+                
+                local idx=$(echo "$info" | grep -E '^\s+index:' | head -1 | awk '{print $2}')
+                local name=$(echo "$info" | grep -E '^\s+interface-name:' | head -1 | awk '{print $2}')
+                local desc=$(echo "$info" | grep -E '^\s+description:' | head -1 | sed 's/.*description: //')
+                local address=$(echo "$info" | grep -E '^\s+address:' | head -1 | awk '{print $2}')
+                local mask=$(echo "$info" | grep -E '^\s+mask:' | head -1 | awk '{print $2}')
+                
+                local bridge_dev="br$idx"
+                local subnet=""
+                if [ -n "$address" ] && [ -n "$mask" ]; then
+                    local cidr=$(mask_to_cidr "$mask")
+                    subnet="$address/$cidr"
+                fi
+                
+                [ -z "$desc" ] && desc="$name"
+                [ -z "$name" ] && name="$bridge_dev"
+                [ -z "$idx" ] && continue
+                
+                local wifi_ssid=""
+                local wifi_info=$(echo "$raw_output" | grep -A20 "id: WifiMaster" | grep -B5 "group: $bridge_id" | grep "ssid:" | head -1 | sed 's/.*ssid: //')
+                [ -n "$wifi_info" ] && wifi_ssid="$wifi_info"
+                
+                segments_json=$(echo "$segments_json" | jq \
+                    --argjson idx "$idx" \
+                    --arg name "$name" \
+                    --arg desc "$desc" \
+                    --arg bridge "$bridge_dev" \
+                    --arg subnet "$subnet" \
+                    --arg wifi "$wifi_ssid" \
+                    '. + [{index: $idx, name: $name, description: $desc, bridge: $bridge, subnet: $subnet, wifi: $wifi}]')
+            done
+        fi
+    fi
+    
+    # Fallback: if ndmc not srabotal, use ip link
+    if [ "$segments_json" = "[]" ]; then
+        for br in $(ip link show 2>/dev/null | grep -oE 'br[0-9]+' | sort -u); do
+            local idx="${br#br}"
+            local subnet=$(ip -4 addr show "$br" 2>/dev/null | grep -oE 'inet [0-9.]+/[0-9]+' | awk '{print $2}')
+            
+            # Generiruem clear imena
+            local name=""
+            local desc=""
+            case "$idx" in
+                0) name="Home"; desc="Home network" ;;
+                1) name="Guest"; desc="Guest network" ;;
+                *) name="Segment$idx"; desc="Segment $idx" ;;
+            esac
+            
+            segments_json=$(echo "$segments_json" | jq \
+                --argjson idx "$idx" \
+                --arg name "$name" \
+                --arg desc "$desc" \
+                --arg bridge "$br" \
+                --arg subnet "$subnet" \
+                --arg wifi "" \
+                '. + [{index: $idx, name: $name, description: $desc, bridge: $bridge, subnet: $subnet, wifi: $wifi}]')
+        done
+    fi
+    
+    # VPN server interfaces
+    vpn_ifs=$(ip link show 2>/dev/null | grep -oE 'wg[0-9]+|nfqueue[0-9]+' | tr '\n' ' ' | sed 's/ *$//')
+    
+    # Formiruem and keep cache
+    local cache_json=""
+    if [ -n "$vpn_ifs" ]; then
+        cache_json=$(jq -n --argjson segments "$segments_json" --arg vpn "$vpn_ifs" '{segments: $segments, vpn_interfaces: $vpn}')
+    else
+        cache_json=$(jq -n --argjson segments "$segments_json" '{segments: $segments}')
+    fi
+    
+    # The file lives on the flash drive and cron rebuilds it every 5 minutes:
+    # rewrite it only when the segments actually changed, never with an empty result
+    [ -n "$cache_json" ] || { echo "  Segments cache: empty result, previous copy kept"; return 1; }
+    if [ -f "$SEGMENTS_CACHE_FILE" ] && [ "$(cat "$SEGMENTS_CACHE_FILE")" = "$cache_json" ]; then
+        echo "  Segments cache unchanged: $(echo "$segments_json" | jq 'length') segments"
+        return 0
+    fi
+    echo "$cache_json" > "$SEGMENTS_CACHE_FILE.tmp" && mv "$SEGMENTS_CACHE_FILE.tmp" "$SEGMENTS_CACHE_FILE"
+    chmod 644 "$SEGMENTS_CACHE_FILE"
+    echo "  Segments cache updated: $(echo "$segments_json" | jq 'length') segments"
+}
+
+# Avtoopredelenie LAN interface
+detect_lan_interface() {
+    # Probuem nayti bridge interface
+    local iface=""
+    
+    # Keenetic obychno uses br0
+    if ip link show br0 >/dev/null 2>&1; then
+        echo "br0"
+        return
+    fi
+    
+    # Or search interface with 192.168.x.x
+    iface=$(ip route | grep "^192.168" | awk '{print $3}' | head -1)
+    [ -n "$iface" ] && { echo "$iface"; return; }
+    
+    # Or with 10.x.x.x
+    iface=$(ip route | grep "^10\." | awk '{print $3}' | head -1)
+    [ -n "$iface" ] && { echo "$iface"; return; }
+    
+    # Fallback
+    echo "br0"
+}
+
+# Opredelenie interfaces VPN-servers (for clients, connecting to routeru)
+detect_vpn_server_interfaces() {
+    local vpn_ifs=""
+    
+    # WireGuard server (nwg0, nwg1, ...)
+    for iface in $(ip link show 2>/dev/null | grep -oE 'nwg[0-9]+' | sort -u); do
+        vpn_ifs="$vpn_ifs $iface"
+    done
+    
+    # IKEv2/IPsec (ipsec0, ipsec1, ...)
+    for iface in $(ip link show 2>/dev/null | grep -oE 'ipsec[0-9]+' | sort -u); do
+        vpn_ifs="$vpn_ifs $iface"
+    done
+    
+    # PPTP/L2TP (ppp0, ppp1, ...)
+    for iface in $(ip link show 2>/dev/null | grep -oE 'ppp[0-9]+' | sort -u); do
+        vpn_ifs="$vpn_ifs $iface"
+    done
+    
+    # OpenVPN (tun0, tun1, ...)
+    for iface in $(ip link show 2>/dev/null | grep -oE 'tun[0-9]+' | sort -u); do
+        vpn_ifs="$vpn_ifs $iface"
+    done
+    
+    # SSTP (sstp*)
+    for iface in $(ip link show 2>/dev/null | grep -oE 'sstp[0-9]+' | sort -u); do
+        vpn_ifs="$vpn_ifs $iface"
+    done
+    
+    echo "$vpn_ifs"
+}
+
+# Izvlechenie IP VPN servers from sing-box configbut
+extract_vpn_servers() {
+    if [ -f "$SINGBOX_CONFIG" ] && command -v grep >/dev/null 2>&1; then
+        # IPv4 addresses
+        local servers=$(grep -oE '"server"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"' "$SINGBOX_CONFIG" 2>/dev/null | \
+                       grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | \
+                       sort -u | tr '\n' ' ')
+        [ -n "$servers" ] && VPN_SERVERS="$VPN_SERVERS $servers"
+        
+        # IPv6 addresses (format: "server": "2001:db8::1" or podobnye)
+        local servers6=$(grep -oE '"server"[[:space:]]*:[[:space:]]*"[0-9a-fA-F:]+:[0-9a-fA-F:]+"' "$SINGBOX_CONFIG" 2>/dev/null | \
+                        grep -oE '[0-9a-fA-F:]+:[0-9a-fA-F:]+' | \
+                        grep ':' | grep -v '^[0-9.]*$' | \
+                        sort -u | tr '\n' ' ')
+        [ -n "$servers6" ] && VPN_SERVERS6="$VPN_SERVERS6 $servers6"
+    fi
+}
+
+# B9: resolve every server of every config and swap the result into the sets in one go.
+# Names go through the local dnsmasq (the router's own resolver); a name that does not
+# resolve right now keeps nothing — the next run (hourly) picks it up.
+refresh_vpn_servers_set() {
+    local configs_dir="$VPN_MANAGER_HOME/configs" hosts host ip n=0
+    [ -d "$configs_dir" ] || return 0
+    hosts=$(cat "$configs_dir"/*.json 2>/dev/null | jq -r '.server // empty' 2>/dev/null | sort -u)
+    ipset create ${IPSET_SERVERS}_new hash:ip 2>/dev/null || ipset flush ${IPSET_SERVERS}_new
+    ipset create ${IPSET6_SERVERS}_new hash:ip family inet6 2>/dev/null || ipset flush ${IPSET6_SERVERS}_new
+    for host in $hosts; do
+        case "$host" in
+            *[!0-9.]*)
+                case "$host" in
+                    *:*) ipset add ${IPSET6_SERVERS}_new "$host" -exist 2>/dev/null && n=$((n + 1)) ;;
+                    *)
+                        for ip in $(dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 "$host" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'); do
+                            ipset add ${IPSET_SERVERS}_new "$ip" -exist 2>/dev/null && n=$((n + 1))
+                        done
+                        for ip in $(dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 "$host" AAAA 2>/dev/null | grep ':'); do
+                            ipset add ${IPSET6_SERVERS}_new "$ip" -exist 2>/dev/null && n=$((n + 1))
+                        done
+                        ;;
+                esac
+                ;;
+            *) ipset add ${IPSET_SERVERS}_new "$host" -exist 2>/dev/null && n=$((n + 1)) ;;
+        esac
+    done
+    ipset create $IPSET_SERVERS hash:ip 2>/dev/null || true
+    ipset create $IPSET6_SERVERS hash:ip family inet6 2>/dev/null || true
+    ipset swap ${IPSET_SERVERS}_new $IPSET_SERVERS && ipset destroy ${IPSET_SERVERS}_new 2>/dev/null
+    ipset swap ${IPSET6_SERVERS}_new $IPSET6_SERVERS && ipset destroy ${IPSET6_SERVERS}_new 2>/dev/null
+    logger -t singbox-rules "VPN server addresses: $n (from $(echo "$hosts" | grep -c .) names)"
+}
+
+# Apply IPv6 settings from active VPN configuration
+apply_ipv6_from_config() {
+    echo "Checking IPv6 settings from active config..."
+    
+    local active_config_file="$VPN_MANAGER_HOME/active-config"
+    local configs_dir="$VPN_MANAGER_HOME/configs"
+    
+    if [ ! -f "$active_config_file" ]; then
+        echo "  No active config, skipping IPv6"
+        return 0
+    fi
+    
+    local active_id=$(cat "$active_config_file" 2>/dev/null)
+    if [ -z "$active_id" ]; then
+        echo "  Empty active config, skipping IPv6"
+        return 0
+    fi
+    
+    local config_file="$configs_dir/${active_id}.json"
+    if [ ! -f "$config_file" ]; then
+        echo "  Config file not found: $config_file"
+        return 0
+    fi
+    
+    # Chitaem ipv6_enabled from configuration
+    local ipv6_enabled=$(jq -r '.ipv6_enabled // false' "$config_file" 2>/dev/null)
+    
+    echo "  Active config: $active_id, IPv6: $ipv6_enabled"
+    
+    if [ "$ipv6_enabled" = "true" ]; then
+        echo "  Enabling IPv6 on router..."
+        keenetic_cmd "interface ISP ipv6 address auto"
+        keenetic_cmd "interface ISP ipv6 prefix delegation"
+        keenetic_cmd "system configuration save"
+        echo "  IPv6 enabled"
+    else
+        echo "  Disabling IPv6 on router..."
+        keenetic_cmd "no interface ISP ipv6 address auto"
+        keenetic_cmd "no interface ISP ipv6 prefix delegation"
+        keenetic_cmd "system configuration save"
+        echo "  IPv6 disabled"
+    fi
+}
+
+# --- Quick restore after a firmware reload (B12) --------------------------------
+# Keenetic wipes our mangle chains on every WAN address renewal (every 30 minutes here).
+# Until the full rebuild brings them back (~3 s) new connections go out unmarked, and the
+# software fast path (FASTNAT) keeps them on the internet port for their whole life.
+# A successful build saves our chains here; the netfilter hook puts them back in one
+# step before its pause. The full rebuild still follows.
+MANGLE_SNAPSHOT=/tmp/singbox-mangle.rules
+MANGLE6_SNAPSHOT=/tmp/singbox-mangle6.rules
+
+# Our chains and their PREROUTING jumps as an iptables-restore file (no *_NEW, no counters)
+# Usage: save_mangle_snapshot iptables-save|ip6tables-save <file>
+save_mangle_snapshot() {
+    local save=$1 out=$2 tmp="$2.tmp.$$" dump="$2.dump.$$" main
+    case "$save" in ip6tables-save) main=SING_BOX6_MARK ;; *) main=SING_BOX_MARK ;; esac
+    # One dump, checked before use: a failed or empty dump, or one without our main
+    # chain (a build that went wrong), must never replace a good copy
+    if ! $save -t mangle > "$dump" 2>/dev/null || ! grep -q "^:$main " "$dump"; then
+        rm -f "$dump"
+        logger -t singbox-rules "snapshot: $main missing in $save output, previous copy kept"
+        return 1
+    fi
+    {
+        echo "*mangle"
+        grep -E '^:SING_BOX6?_MARK(_FULL|_VPNP)? ' "$dump" | sed 's/\[[0-9]*:[0-9]*\]/[0:0]/'
+        grep -E '^-A (SING_BOX6?_MARK(_FULL|_VPNP)? |PREROUTING .*-j SING_BOX6?_MARK(_FULL|_VPNP)?$)' "$dump"
+        echo "COMMIT"
+    } > "$tmp"
+    rm -f "$dump"
+    # Rewrite only when the rules really changed (usually they are the same)
+    if cmp -s "$tmp" "$out"; then
+        rm -f "$tmp"
+    else
+        mv "$tmp" "$out"
+    fi
+}
+
+# Put our chains back only if they are gone (a no-op otherwise, so nothing is doubled).
+# iptables 1.4.21 restore has no lock wait: check afterwards and retry for about a second.
+# Usage: quick_restore iptables|ip6tables <restore command> <file> <chain to check>
+# The way into the tunnel: FORWARD accepts to/from singbox0 (Keenetic's FORWARD policy
+# is DROP) and the RETURN that keeps _NDM_MASQ off tunnel traffic. A firmware reload
+# rewrites FORWARD and nat wholesale and drops these — the marked packets are then
+# routed to singbox0 and thrown away: VPN dead, sing-box and marking fine (26.09,
+# the recorder caught FORWARD without our lines mid-outage). Idempotent; prints the
+# number of lines it had to put back.
+tun_passage_restore() {
+    local ipt n=0
+    for ipt in iptables ip6tables; do
+        command -v $ipt >/dev/null 2>&1 || continue
+        $ipt -w -C FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null || { $ipt -w -I FORWARD 1 -i $TUN_INTERFACE -j ACCEPT 2>/dev/null && n=$((n + 1)); }
+        $ipt -w -C FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null || { $ipt -w -I FORWARD 1 -o $TUN_INTERFACE -j ACCEPT 2>/dev/null && n=$((n + 1)); }
+        $ipt -w -t nat -C POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null || { $ipt -w -t nat -I POSTROUTING 1 -o $TUN_INTERFACE -j RETURN 2>/dev/null && n=$((n + 1)); }
+    done
+    [ $n -gt 0 ] && logger -t singbox-rules "quick-restore: tunnel passage back after a firmware reload ($n rules)"
+    echo $n
+}
+
+tun_passage_ok() {
+    iptables -w -C FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null &&
+    iptables -w -C FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null &&
+    iptables -w -t nat -C POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null
+}
+
+quick_restore() {
+    local ipt=$1 restore=$2 file=$3 chain=$4 i
+    [ -s "$file" ] || return 0
+    $ipt -w -t mangle -S $chain >/dev/null 2>&1 && return 0
+    for i in 1 2 3 4 5; do
+        $restore --noflush < "$file" 2>/dev/null
+        if $ipt -w -t mangle -S $chain >/dev/null 2>&1; then
+            logger -t singbox-rules "quick-restore: $chain back after a firmware reload (try $i)"
+            return 0
+        fi
+        usleep 200000 2>/dev/null || sleep 1
+    done
+    logger -t singbox-rules "quick-restore: $chain NOT restored, the full rebuild will follow"
+    return 1
+}
+
+start() {
+    echo "=== sing-box rules start ==="
+    
+    # Check flaga avtostarta when boot sistemy
+    AUTOSTART_FLAG="/opt/etc/vpn-manager/autostart-enabled"
+    if [ "$BOOT_START" = "1" ] && [ ! -f "$AUTOSTART_FLAG" ]; then
+        echo "Autostart disabled, skipping rules"
+        return 0
+    fi
+    
+    # Apply IPv6 and update segments cache only on full start (not restart-rules)
+    # ndmc calls can hang and block the script, especially during netfilter events
+    if [ "$SKIP_HEAVY_OPS" != "1" ]; then
+        apply_ipv6_from_config
+        update_segments_cache
+    fi
+    
+    # 0. Detect LAN interface, VPN interfaces and VPN servers
+    LAN_IF=$(detect_lan_interface)
+    echo "LAN interface: $LAN_IF"
+    
+    VPN_SERVER_IFS=$(detect_vpn_server_interfaces)
+    if [ -n "$VPN_SERVER_IFS" ]; then
+        echo "VPN server interfaces:$VPN_SERVER_IFS"
+    fi
+    
+    extract_vpn_servers
+    echo "VPN servers (IPv4): $VPN_SERVERS"
+    [ -n "$VPN_SERVERS6" ] && echo "VPN servers (IPv6): $VPN_SERVERS6"
+    
+    # 1. Wait for TUN interface (sing-box creates it)
+    echo "Checking TUN interface..."
+    if ip link show "$TUN_INTERFACE" >/dev/null 2>&1; then
+        echo "  $TUN_INTERFACE: UP"
+    else
+        echo "  $TUN_INTERFACE: not yet created (sing-box will create it on start)"
+    fi
+    
+    # 2. Create ipset
+    echo "Creating ipsets..."
+    
+    # TCP+UDP domains (IPv4 + IPv6) — Not clear, to save kesh DNS
+    ipset create $IPSET_TCPUDP hash:ip timeout 86400 2>/dev/null || true
+    ipset create $IPSET6_TCPUDP hash:ip family inet6 timeout 86400 2>/dev/null || true
+    
+    # UDP-only domains (IPv4 + IPv6) — Not clear, to save kesh DNS
+    ipset create $IPSET_UDPONLY hash:ip timeout 86400 2>/dev/null || true
+    ipset create $IPSET6_UDPONLY hash:ip family inet6 timeout 86400 2>/dev/null || true
+    
+    # Ustroystva (by src IP) — DISABLED
+    # ipset create $IPSET_DEVICES hash:ip 2>/dev/null || ipset flush $IPSET_DEVICES
+    
+    # IP-subnets (CIDR) — hash:net for support /16, /24 and t.d.
+    # TCP+UDP subnets
+    ipset create $IPSET_SUBNETS hash:net 2>/dev/null || true
+    ipset create $IPSET6_SUBNETS hash:net family inet6 2>/dev/null || true
+    # UDP-only subnets
+    ipset create $IPSET_SUBNETS_UDP hash:net 2>/dev/null || true
+    ipset create $IPSET6_SUBNETS_UDP hash:net family inet6 2>/dev/null || true
+    
+    # B9: VPN server addresses (filled in the background by refresh_vpn_servers_set)
+    ipset create $IPSET_SERVERS hash:ip 2>/dev/null || true
+    ipset create $IPSET6_SERVERS hash:ip family inet6 2>/dev/null || true
+
+    echo "  ipsets: OK"
+    
+    # 3. Load IP-subnets in ipset
+    load_subnets
+
+    # 3a. "Russia" list set (B1): its ipsets and subnets, kept by its own script
+    [ -x "$VPN_MANAGER_HOME/scripts/direct-lists.sh" ] && "$VPN_MANAGER_HOME/scripts/direct-lists.sh" subnets >/dev/null 2>&1
+    
+    # 4. Load ustroystva in ipset — DISABLED
+    # load_devices
+    
+    # =========================================================================
+    # IPv4 rules — TUN mode via fwmark + policy routing
+    # TCP and UDP are handled uniformly (no separate TPROXY/REDIRECT)
+    # =========================================================================
+    echo "Setting up iptables (IPv4) - TUN mode..."
+    
+    # -------------------------------------------------------------------------
+    # SING_BOX_MARK — split tunnel (by ipset: domains + subnets)
+    # Marks matching packets with TUN_FWMARK → policy routing sends them to singbox0
+    # -------------------------------------------------------------------------
+    # Mark chains are built under *_NEW names and swapped in by swap_mark_chain, so
+    # PREROUTING never passes through an empty chain (that let traffic leak via WAN).
+    rules_lock
+    echo "  Creating SING_BOX_MARK chain..."
+    prepare_mark_chain iptables SING_BOX_MARK
+    
+    # Exclude VPN servers (prevent routing loops)
+    for server in $VPN_SERVERS; do
+        iptables -t mangle -A SING_BOX_MARK_NEW -d $server -j RETURN
+    done
+    iptables -t mangle -A SING_BOX_MARK_NEW -m set --match-set $IPSET_SERVERS dst -j RETURN
+    
+    # Exclude private networks
+    iptables -t mangle -A SING_BOX_MARK_NEW -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_NEW -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_NEW -d 172.16.0.0/12 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_NEW -d 127.0.0.0/8 -j RETURN
+    
+    # The set bound to Direct primary → mark (World by default: vpn_domains, vpn_domains_udp,
+    # vpn_subnets, vpn_subnets_udp — the same rules in the same order as before B1)
+    local via_set=$(list_binding split)
+    mark_set_rules iptables SING_BOX_MARK_NEW $(set_ipsets "$via_set")
+
+    echo "  SING_BOX_MARK (split, set $via_set): OK"
+    
+    # -------------------------------------------------------------------------
+    # SING_BOX_MARK_FULL — full VPN (all traffic)
+    # -------------------------------------------------------------------------
+    echo "  Creating SING_BOX_MARK_FULL chain..."
+    prepare_mark_chain iptables SING_BOX_MARK_FULL
+    
+    # Exclude VPN servers
+    for server in $VPN_SERVERS; do
+        iptables -t mangle -A SING_BOX_MARK_FULL_NEW -d $server -j RETURN
+    done
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -m set --match-set $IPSET_SERVERS dst -j RETURN
+    
+    # Exclude private networks
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -d 172.16.0.0/12 -j RETURN
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -d 127.0.0.0/8 -j RETURN
+    
+    # All traffic → mark (no ipset filtering)
+    iptables -t mangle -A SING_BOX_MARK_FULL_NEW -j MARK --set-mark $TUN_FWMARK
+    
+    echo "  SING_BOX_MARK_FULL (fullvpn): OK"
+
+    # -------------------------------------------------------------------------
+    # SING_BOX_MARK_VPNP — VPN primary (B1): everything via VPN except the direct set.
+    # The Direct-primary set is marked first, so a specific site listed there wins
+    # over a whole zone in the direct set (MARK does not end the chain, RETURN keeps it).
+    # -------------------------------------------------------------------------
+    echo "  Creating SING_BOX_MARK_VPNP chain..."
+    prepare_mark_chain iptables SING_BOX_MARK_VPNP
+
+    for server in $VPN_SERVERS; do
+        iptables -t mangle -A SING_BOX_MARK_VPNP_NEW -d $server -j RETURN
+    done
+    iptables -t mangle -A SING_BOX_MARK_VPNP_NEW -m set --match-set $IPSET_SERVERS dst -j RETURN
+    for net in 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.0/8; do
+        iptables -t mangle -A SING_BOX_MARK_VPNP_NEW -d $net -j RETURN
+    done
+
+    mark_set_rules iptables SING_BOX_MARK_VPNP_NEW $(set_ipsets "$via_set")
+    local direct_set=$(list_binding vpnprimary)
+    return_set_rules iptables SING_BOX_MARK_VPNP_NEW $(set_ipsets "$direct_set")
+    iptables -t mangle -A SING_BOX_MARK_VPNP_NEW -j MARK --set-mark $TUN_FWMARK
+
+    echo "  SING_BOX_MARK_VPNP (vpnprimary, direct set $direct_set): OK"
+
+    swap_mark_chain iptables SING_BOX_MARK
+    swap_mark_chain iptables SING_BOX_MARK_FULL
+    swap_mark_chain iptables SING_BOX_MARK_VPNP
+    
+    # -------------------------------------------------------------------------
+    # Connect chains to PREROUTING based on per-segment policies
+    # -------------------------------------------------------------------------
+    echo "  Applying policies to interfaces..."
+    
+    for br_if in $(get_all_bridge_interfaces); do
+        local policy=$(get_interface_policy "$br_if")
+        case "$policy" in
+            direct)
+                echo "    $br_if: direct (no VPN)"
+                drop_mark_jumps iptables $br_if ""
+                ;;
+            split)
+                echo "    $br_if: split (domains/subnets via VPN)"
+                drop_mark_jumps iptables $br_if SING_BOX_MARK
+                iptables -t mangle -C PREROUTING -i $br_if -j SING_BOX_MARK 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $br_if -j SING_BOX_MARK
+                ;;
+            vpnprimary)
+                echo "    $br_if: vpnprimary (all via VPN except set $direct_set)"
+                drop_mark_jumps iptables $br_if SING_BOX_MARK_VPNP
+                iptables -t mangle -C PREROUTING -i $br_if -j SING_BOX_MARK_VPNP 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $br_if -j SING_BOX_MARK_VPNP
+                ;;
+            fullvpn)
+                echo "    $br_if: fullvpn (all traffic via VPN)"
+                drop_mark_jumps iptables $br_if SING_BOX_MARK_FULL
+                iptables -t mangle -C PREROUTING -i $br_if -j SING_BOX_MARK_FULL 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $br_if -j SING_BOX_MARK_FULL
+                ;;
+        esac
+    done
+    
+    # VPN-server interfaces (WireGuard, IPsec clients etc.)
+    local vpn_server_policy=$(get_interface_policy "vpn_server")
+    for vpn_if in $VPN_SERVER_IFS; do
+        case "$vpn_server_policy" in
+            direct)
+                echo "    $vpn_if (VPN server): direct"
+                drop_mark_jumps iptables $vpn_if ""
+                ;;
+            split)
+                drop_mark_jumps iptables $vpn_if SING_BOX_MARK
+                iptables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX_MARK 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX_MARK
+                echo "    $vpn_if (VPN server): split"
+                ;;
+            vpnprimary)
+                drop_mark_jumps iptables $vpn_if SING_BOX_MARK_VPNP
+                iptables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX_MARK_VPNP 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX_MARK_VPNP
+                echo "    $vpn_if (VPN server): vpnprimary"
+                ;;
+            fullvpn)
+                drop_mark_jumps iptables $vpn_if SING_BOX_MARK_FULL
+                iptables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX_MARK_FULL 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX_MARK_FULL
+                echo "    $vpn_if (VPN server): fullvpn"
+                ;;
+        esac
+    done
+    
+    echo "  iptables (IPv4): OK"
+    
+    # =========================================================================
+    # IPv6 rules (same approach as IPv4: MARK + policy routing to TUN)
+    # =========================================================================
+    echo "Setting up ip6tables (IPv6) - TUN mode..."
+    
+    if command -v ip6tables >/dev/null 2>&1; then
+        # -------------------------------------------------------------------------
+        # SING_BOX6_MARK — split tunnel (by ipset)
+        # -------------------------------------------------------------------------
+        prepare_mark_chain ip6tables SING_BOX6_MARK
+        
+        # Exclude VPN servers IPv6
+        for server in $VPN_SERVERS6; do
+            ip6tables -t mangle -A SING_BOX6_MARK_NEW -d $server -j RETURN
+        done
+        ip6tables -t mangle -A SING_BOX6_MARK_NEW -m set --match-set $IPSET6_SERVERS dst -j RETURN
+        
+        # Exclude link-local and local addresses
+        ip6tables -t mangle -A SING_BOX6_MARK_NEW -d ::1/128 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_NEW -d fe80::/10 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_NEW -d fc00::/7 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_NEW -d ff00::/8 -j RETURN
+        
+        # The set bound to Direct primary → mark (World by default, same rules as before B1)
+        mark_set_rules ip6tables SING_BOX6_MARK_NEW $(set_ipsets "$via_set" 6)
+        
+        echo "  SING_BOX6_MARK (split): OK"
+        
+        # -------------------------------------------------------------------------
+        # SING_BOX6_MARK_FULL — full VPN (all traffic)
+        # -------------------------------------------------------------------------
+        prepare_mark_chain ip6tables SING_BOX6_MARK_FULL
+        
+        # Exclude VPN servers IPv6
+        for server in $VPN_SERVERS6; do
+            ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -d $server -j RETURN
+        done
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -m set --match-set $IPSET6_SERVERS dst -j RETURN
+        
+        # Exclude link-local and local addresses
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -d ::1/128 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -d fe80::/10 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -d fc00::/7 -j RETURN
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -d ff00::/8 -j RETURN
+        
+        # All traffic → mark
+        ip6tables -t mangle -A SING_BOX6_MARK_FULL_NEW -j MARK --set-mark $TUN_FWMARK
+        
+        echo "  SING_BOX6_MARK_FULL (fullvpn): OK"
+        
+        # -------------------------------------------------------------------------
+        # Connect IPv6 chains to PREROUTING based on policies
+        # -------------------------------------------------------------------------
+        # SING_BOX6_MARK_VPNP — VPN primary (B1), same logic as IPv4
+        prepare_mark_chain ip6tables SING_BOX6_MARK_VPNP
+        for server in $VPN_SERVERS6; do
+            ip6tables -t mangle -A SING_BOX6_MARK_VPNP_NEW -d $server -j RETURN
+        done
+        ip6tables -t mangle -A SING_BOX6_MARK_VPNP_NEW -m set --match-set $IPSET6_SERVERS dst -j RETURN
+        for net in ::1/128 fe80::/10 fc00::/7 ff00::/8; do
+            ip6tables -t mangle -A SING_BOX6_MARK_VPNP_NEW -d $net -j RETURN
+        done
+        mark_set_rules ip6tables SING_BOX6_MARK_VPNP_NEW $(set_ipsets "$via_set" 6)
+        return_set_rules ip6tables SING_BOX6_MARK_VPNP_NEW $(set_ipsets "$direct_set" 6)
+        ip6tables -t mangle -A SING_BOX6_MARK_VPNP_NEW -j MARK --set-mark $TUN_FWMARK
+        echo "  SING_BOX6_MARK_VPNP (vpnprimary): OK"
+
+        swap_mark_chain ip6tables SING_BOX6_MARK
+        swap_mark_chain ip6tables SING_BOX6_MARK_FULL
+        swap_mark_chain ip6tables SING_BOX6_MARK_VPNP
+
+        echo "  Applying IPv6 policies to interfaces..."
+        
+        for br_if in $(get_all_bridge_interfaces); do
+            local policy=$(get_interface_policy "$br_if")
+            case "$policy" in
+                direct)
+                    echo "    $br_if (IPv6): direct"
+                    drop_mark_jumps ip6tables $br_if ""
+                    ;;
+                split)
+                    echo "    $br_if (IPv6): split"
+                    drop_mark_jumps ip6tables $br_if SING_BOX6_MARK
+                    ip6tables -t mangle -C PREROUTING -i $br_if -j SING_BOX6_MARK 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $br_if -j SING_BOX6_MARK
+                    ;;
+                vpnprimary)
+                    echo "    $br_if (IPv6): vpnprimary"
+                    drop_mark_jumps ip6tables $br_if SING_BOX6_MARK_VPNP
+                    ip6tables -t mangle -C PREROUTING -i $br_if -j SING_BOX6_MARK_VPNP 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $br_if -j SING_BOX6_MARK_VPNP
+                    ;;
+                fullvpn)
+                    echo "    $br_if (IPv6): fullvpn"
+                    drop_mark_jumps ip6tables $br_if SING_BOX6_MARK_FULL
+                    ip6tables -t mangle -C PREROUTING -i $br_if -j SING_BOX6_MARK_FULL 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $br_if -j SING_BOX6_MARK_FULL
+                    ;;
+            esac
+        done
+        
+        # VPN-server interfaces (IPv6)
+        local vpn_server_policy=$(get_interface_policy "vpn_server")
+        for vpn_if in $VPN_SERVER_IFS; do
+            case "$vpn_server_policy" in
+                direct)
+                    echo "    $vpn_if (VPN server, IPv6): direct"
+                    drop_mark_jumps ip6tables $vpn_if ""
+                    ;;
+                split)
+                    echo "    $vpn_if (VPN server, IPv6): split"
+                    drop_mark_jumps ip6tables $vpn_if SING_BOX6_MARK
+                    ip6tables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX6_MARK 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX6_MARK
+                    ;;
+                vpnprimary)
+                    echo "    $vpn_if (VPN server, IPv6): vpnprimary"
+                    drop_mark_jumps ip6tables $vpn_if SING_BOX6_MARK_VPNP
+                    ip6tables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX6_MARK_VPNP 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX6_MARK_VPNP
+                    ;;
+                fullvpn)
+                    echo "    $vpn_if (VPN server, IPv6): fullvpn"
+                    drop_mark_jumps ip6tables $vpn_if SING_BOX6_MARK_FULL
+                    ip6tables -t mangle -C PREROUTING -i $vpn_if -j SING_BOX6_MARK_FULL 2>/dev/null || \
+                        ip6tables -t mangle -A PREROUTING -i $vpn_if -j SING_BOX6_MARK_FULL
+                    ;;
+            esac
+        done
+        
+        # -------------------------------------------------------------------------
+        # IPv6 DNS redirect (for all bridge interfaces)
+        # -------------------------------------------------------------------------
+        for br_if in $(get_all_bridge_interfaces); do
+            ip6tables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353
+            ip6tables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+        done
+        
+        # IPv6 DNS redirect for VPN-clients
+        for vpn_if in $VPN_SERVER_IFS; do
+            ip6tables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353
+            ip6tables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+        done
+        echo "  IPv6 DNS redirect: OK"
+    else
+        echo "  ip6tables: NOT AVAILABLE"
+    fi
+    
+    # Perenapravlenie IPv4 DNS on dnsmasq (port 5353)
+    # IMPORTANT: -I PREROUTING 1 vstavlyaet in nachalo, to intercept DNS to system rules Keenetic
+    # Apply to ALL bridge interfaces (br0, br1, br2...) — same as IPv6 DNS redirect
+    for br_if in $(get_all_bridge_interfaces); do
+        iptables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353
+        iptables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+    done
+    
+    # DNS redirect for VPN-clients router
+    for vpn_if in $VPN_SERVER_IFS; do
+        iptables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353
+        iptables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+    done
+    echo "  IPv4 DNS redirect: OK"
+    
+    # Copy of our chains for the quick restore after a firmware reload (B12)
+    save_mangle_snapshot iptables-save $MANGLE_SNAPSHOT
+    command -v ip6tables-save >/dev/null 2>&1 && save_mangle_snapshot ip6tables-save $MANGLE6_SNAPSHOT
+    
+    # =========================================================================
+    # FORWARD rules — allow traffic to/from TUN interface
+    # Keenetic FORWARD policy is DROP, so we must explicitly allow singbox0
+    # =========================================================================
+    rules_unlock
+
+    echo "Setting up FORWARD rules for TUN..."
+    
+    iptables -C FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i $TUN_INTERFACE -j ACCEPT
+    iptables -C FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -o $TUN_INTERFACE -j ACCEPT
+    
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -C FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null || \
+            ip6tables -I FORWARD -i $TUN_INTERFACE -j ACCEPT
+        ip6tables -C FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null || \
+            ip6tables -I FORWARD -o $TUN_INTERFACE -j ACCEPT
+    fi
+    
+    echo "  FORWARD rules for $TUN_INTERFACE: OK"
+    
+    # =========================================================================
+    # Skip MASQUERADE for TUN traffic
+    # Keenetic's _NDM_MASQ chain MASQUERADEs all LAN traffic going to non-br0
+    # interfaces, which breaks TUN by rewriting src IP to 172.19.0.1
+    # =========================================================================
+    iptables -t nat -C POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null || \
+        iptables -t nat -I POSTROUTING -o $TUN_INTERFACE -j RETURN
+    
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -t nat -C POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null || \
+            ip6tables -t nat -I POSTROUTING -o $TUN_INTERFACE -j RETURN
+    fi
+    
+    echo "  Skip MASQUERADE for $TUN_INTERFACE: OK"
+    
+    # =========================================================================
+    # POLICY ROUTING — route marked packets to TUN interface
+    # =========================================================================
+    echo "Setting up policy routing for TUN..."
+    
+    mkdir -p /opt/etc/iproute2
+    grep -q "^${TUN_TABLE} vpn$" /opt/etc/iproute2/rt_tables 2>/dev/null || \
+        echo "${TUN_TABLE} vpn" >> /opt/etc/iproute2/rt_tables
+    ln -sf /opt/etc/iproute2 /tmp/iproute2 2>/dev/null
+    
+    # IPv4: marked packets → route to TUN interface
+    ip rule add fwmark $TUN_FWMARK lookup $TUN_TABLE priority 100 2>/dev/null
+    ip route replace default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null || \
+        ip route add default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null
+    
+    # IPv6: same approach
+    ip -6 rule add fwmark $TUN_FWMARK lookup $TUN_TABLE priority 100 2>/dev/null
+    ip -6 route replace default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null || \
+        ip -6 route add default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null
+
+    # Kill switch: while sing-box restarts, singbox0 and its route vanish and marked
+    # packets would fall through to the main table — straight out via WAN. A blackhole
+    # default with a worse metric drops them instead; the TUN route wins while it exists.
+    ip route replace blackhole default metric $KILLSWITCH_METRIC table $TUN_TABLE 2>/dev/null
+    ip -6 route replace blackhole default metric $KILLSWITCH_METRIC table $TUN_TABLE 2>/dev/null
+
+    echo "  routing: OK (fwmark $TUN_FWMARK → table $TUN_TABLE → $TUN_INTERFACE, kill switch on)"
+    
+    # =========================================================================
+    # WARM UP DOMAINS (resolve all domains to populate ipset)
+    # =========================================================================
+    if [ "$SKIP_WARMUP" != "1" ]; then
+        warmup_domains
+    else
+        echo "  Skipping warmup (restart-rules mode)"
+    fi
+    
+    # B9: fill the server-address set once it is empty (boot, first start, any caller:
+    # S99 runs "restart-rules"). In the background, so nothing waits for DNS
+    if [ "$(ipset list $IPSET_SERVERS 2>/dev/null | grep -c '^[0-9]')" = "0" ]; then
+        ( sleep 20; refresh_vpn_servers_set ) >/dev/null 2>&1 </dev/null &
+    fi
+
+    echo "=== Done ==="
+}
+
+# Warm-up domains — resolve all domains to zapolnit ipset
+warmup_domains() {
+    echo "Warming up domains (populating ipset via DNS)..."
+    
+    # IMPORTANT: dnsmasq on port 5353, nslookup not supports port
+    # Use dig if there is, inache netcat UDP
+    local DNS_CMD=""
+    local DNS_PORT=5353
+    
+    if command -v dig >/dev/null 2>&1; then
+        DNS_CMD="dig"
+        echo "  Using dig for DNS queries (port $DNS_PORT)"
+    else
+        echo "  WARNING: dig not found, installing bind-dig..."
+        opkg install bind-dig >/dev/null 2>&1
+        if command -v dig >/dev/null 2>&1; then
+            DNS_CMD="dig"
+        fi
+    fi
+    
+    if [ -z "$DNS_CMD" ]; then
+        echo "  ERROR: No DNS tool available for port $DNS_PORT, skipping warmup"
+        return 1
+    fi
+    
+    # Wait readynosti dnsmasq (to 30 sekund)
+    local wait_count=0
+    while [ $wait_count -lt 30 ]; do
+        if dig @127.0.0.1 -p $DNS_PORT localhost +short +time=1 >/dev/null 2>&1; then
+            break
+        fi
+        echo "  Waiting for dnsmasq on port $DNS_PORT... ($wait_count/30)"
+        sleep 1
+        wait_count=$((wait_count + 1))
+    done
+    
+    if [ $wait_count -ge 30 ]; then
+        echo "  WARNING: dnsmasq not ready after 30s, trying upstream fallback (DoT)..."
+        local fallback="/opt/etc/vpn-manager/scripts/dns-upstream-fallback.sh"
+        if [ -x "$fallback" ]; then
+            "$fallback" apply --quiet 2>/dev/null || true
+            local retry=0
+            while [ $retry -lt 10 ]; do
+                if dig @127.0.0.1 -p $DNS_PORT google.com +short +time=2 >/dev/null 2>&1; then
+                    echo "  dnsmasq OK after upstream fallback"
+                    break
+                fi
+                retry=$((retry + 1))
+                sleep 1
+            done
+            [ $retry -ge 10 ] && echo "  WARNING: dnsmasq still not ready after fallback"
+        else
+            echo "  WARNING: dnsmasq not ready after 30s, warmup may fail"
+        fi
+    fi
+    
+    local domains_file="$VPN_MANAGER_HOME/vpn-domains.txt"
+    local domains_udp_file="$VPN_MANAGER_HOME/vpn-domains-udp.txt"
+    local count=0
+    
+    # FEAT-011: warm up the merged list (local + remote auto-update),
+    # not just the local file — otherwise domains provided only by remote source
+    # are never warmed up and only populate lazily on first DNS hit.
+    local tmp_warmup=$(mktemp)
+    {
+        get_merged_list "$domains_file"     "$REMOTE_DOMAINS_FILE"
+        get_merged_list "$domains_udp_file" "$REMOTE_DOMAINS_UDP_FILE"
+    } | sort -u > "$tmp_warmup"
+    
+    local total=$(wc -l < "$tmp_warmup" 2>/dev/null | tr -d ' \n\r')
+    total=${total:-0}
+    
+    echo "  Total domains to resolve: $total (merged local+remote, deduped)"
+    
+    # Read from real file (not pipe) so $count stays in the parent shell
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        # Strip wildcard prefix (dnsmasq treats `foo.com` and `*.foo.com` equivalently)
+        domain=$(echo "$line" | sed 's/^\*\.//; s/^\*//')
+        [ -z "$domain" ] && continue
+        dig @127.0.0.1 -p $DNS_PORT "$domain" A    +short +time=2 >/dev/null 2>&1 &
+        dig @127.0.0.1 -p $DNS_PORT "$domain" AAAA +short +time=2 >/dev/null 2>&1 &
+        count=$((count + 1))
+        if [ $((count % 50)) -eq 0 ]; then
+            # Reap finished children to avoid running out of PIDs on long lists
+            wait 2>/dev/null
+            echo "  Resolved: $count / $total"
+        fi
+    done < "$tmp_warmup"
+    
+    rm -f "$tmp_warmup"
+    
+    # Wait zaversheniya background processes
+    wait 2>/dev/null
+    
+    # Check result (IPv4 and IPv6)
+    local ipset_count=$(ipset list $IPSET_TCPUDP 2>/dev/null | grep -c '^[0-9]' || echo 0)
+    local ipset6_count=$(ipset list $IPSET6_TCPUDP 2>/dev/null | grep -c ':' || echo 0)
+    echo "  Domains resolved: $count, IPv4 in ipset: $ipset_count, IPv6 in ipset: $ipset6_count"
+}
+
+# Loading IP-subnets in ipset (for services using IP directly)
+# FEAT-011: Uses merged list (local + remote)
+load_subnets() {
+    echo "Loading IP subnets into ipset (merged)..."
+    
+    # Fill temporary sets and swap them in whole: flushing the live sets first left
+    # subnet traffic unmarked (out via WAN) until every entry was added back
+    local s
+    for s in $IPSET_SUBNETS $IPSET_SUBNETS_UDP; do
+        ipset create ${s}_tmp hash:net 2>/dev/null || ipset flush ${s}_tmp
+    done
+    for s in $IPSET6_SUBNETS $IPSET6_SUBNETS_UDP; do
+        ipset create ${s}_tmp hash:net family inet6 2>/dev/null || ipset flush ${s}_tmp
+    done
+
+    local count=0
+    local count_udp=0
+    
+    # Load TCP+UDP subnets (merged)
+    local merged_subnets=$(get_merged_list "$SUBNETS_FILE" "$REMOTE_SUBNETS_FILE")
+    
+    if [ -n "$merged_subnets" ]; then
+        echo "$merged_subnets" | while IFS= read -r subnet; do
+            [ -z "$subnet" ] && continue
+            
+            # Detect IPv4 or IPv6
+            case "$subnet" in
+                *:*)
+                    # IPv6
+                    ipset add ${IPSET6_SUBNETS}_tmp "$subnet" 2>/dev/null
+                    ;;
+                *)
+                    # IPv4
+                    ipset add ${IPSET_SUBNETS}_tmp "$subnet" 2>/dev/null
+                    ;;
+            esac
+        done
+        count=$(echo "$merged_subnets" | wc -l)
+        echo "  TCP+UDP subnets loaded: $count (merged)"
+    else
+        echo "  No TCP+UDP subnets found"
+    fi
+    
+    # Load UDP-only subnets (merged)
+    local merged_subnets_udp=$(get_merged_list "$SUBNETS_UDP_FILE" "$REMOTE_SUBNETS_UDP_FILE")
+    
+    if [ -n "$merged_subnets_udp" ]; then
+        echo "$merged_subnets_udp" | while IFS= read -r subnet; do
+            [ -z "$subnet" ] && continue
+            
+            # Detect IPv4 or IPv6
+            case "$subnet" in
+                *:*)
+                    # IPv6
+                    ipset add ${IPSET6_SUBNETS_UDP}_tmp "$subnet" 2>/dev/null
+                    ;;
+                *)
+                    # IPv4
+                    ipset add ${IPSET_SUBNETS_UDP}_tmp "$subnet" 2>/dev/null
+                    ;;
+            esac
+        done
+        count_udp=$(echo "$merged_subnets_udp" | wc -l)
+        echo "  UDP-only subnets loaded: $count_udp (merged)"
+    else
+        echo "  No UDP-only subnets found"
+    fi
+
+    for s in $IPSET_SUBNETS $IPSET_SUBNETS_UDP $IPSET6_SUBNETS $IPSET6_SUBNETS_UDP; do
+        if ipset swap ${s}_tmp $s 2>/dev/null; then
+            ipset destroy ${s}_tmp 2>/dev/null
+        else
+            echo "  WARNING: could not swap in $s"
+        fi
+    done
+}
+
+# Loading devices in ipset — DISABLED
+# Functionality does not work correctly with PSN and drugimi servisami.
+# For device routing use Keenetic native WireGuard.
+# load_devices() {
+#     echo "Loading devices into ipset..."
+#     ...
+# }
+
+stop() {
+    rm -f $MANGLE_SNAPSHOT $MANGLE6_SNAPSHOT
+    echo "=== sing-box rules stop ==="
+    rules_lock
+    
+    LAN_IF=$(detect_lan_interface)
+    VPN_SERVER_IFS=$(detect_vpn_server_interfaces)
+    
+    # All interfaces for cleanup: LAN + VPN + fallback
+    ALL_IFACES="$LAN_IF br0 eth0 $VPN_SERVER_IFS"
+    
+    # Add all bridge interfaces
+    for br in $(get_all_bridge_interfaces); do
+        case "$ALL_IFACES" in
+            *"$br"*) ;;
+            *) ALL_IFACES="$ALL_IFACES $br" ;;
+        esac
+    done
+    
+    # IPv4 mangle — remove MARK chains
+    for iface in $ALL_IFACES; do
+        iptables -t mangle -D PREROUTING -i $iface -j SING_BOX_MARK 2>/dev/null
+        iptables -t mangle -D PREROUTING -i $iface -j SING_BOX_MARK_FULL 2>/dev/null
+        iptables -t mangle -D PREROUTING -i $iface -j SING_BOX_MARK_VPNP 2>/dev/null
+    done
+    iptables -t mangle -F SING_BOX_MARK 2>/dev/null
+    iptables -t mangle -X SING_BOX_MARK 2>/dev/null
+    iptables -t mangle -F SING_BOX_MARK_FULL 2>/dev/null
+    iptables -t mangle -X SING_BOX_MARK_FULL 2>/dev/null
+    iptables -t mangle -F SING_BOX_MARK_NEW 2>/dev/null; iptables -t mangle -X SING_BOX_MARK_NEW 2>/dev/null
+    iptables -t mangle -F SING_BOX_MARK_FULL_NEW 2>/dev/null; iptables -t mangle -X SING_BOX_MARK_FULL_NEW 2>/dev/null
+    iptables -t mangle -F SING_BOX_MARK_VPNP 2>/dev/null; iptables -t mangle -X SING_BOX_MARK_VPNP 2>/dev/null
+    iptables -t mangle -F SING_BOX_MARK_VPNP_NEW 2>/dev/null; iptables -t mangle -X SING_BOX_MARK_VPNP_NEW 2>/dev/null
+    
+    # Legacy cleanup (in case upgrading from TPROXY/REDIRECT version)
+    for iface in $ALL_IFACES; do
+        iptables -t mangle -D PREROUTING -i $iface -j SING_BOX 2>/dev/null
+        iptables -t mangle -D PREROUTING -i $iface -j SING_BOX_FULL 2>/dev/null
+        iptables -t nat -D PREROUTING -i $iface -j SING_BOX_REDIRECT 2>/dev/null
+        iptables -t nat -D PREROUTING -i $iface -j SING_BOX_FULLVPN 2>/dev/null
+    done
+    iptables -t mangle -F SING_BOX 2>/dev/null; iptables -t mangle -X SING_BOX 2>/dev/null
+    iptables -t mangle -F SING_BOX_FULL 2>/dev/null; iptables -t mangle -X SING_BOX_FULL 2>/dev/null
+    iptables -t nat -F SING_BOX_REDIRECT 2>/dev/null; iptables -t nat -X SING_BOX_REDIRECT 2>/dev/null
+    iptables -t nat -F SING_BOX_FULLVPN 2>/dev/null; iptables -t nat -X SING_BOX_FULLVPN 2>/dev/null
+    iptables -t mangle -D PREROUTING -p tcp -m socket -j DIVERT 2>/dev/null
+    iptables -t mangle -F DIVERT 2>/dev/null; iptables -t mangle -X DIVERT 2>/dev/null
+    
+    # IPv6
+    if command -v ip6tables >/dev/null 2>&1; then
+        for iface in $ALL_IFACES; do
+            ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6_MARK 2>/dev/null
+            ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6_MARK_FULL 2>/dev/null
+            ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6_MARK_VPNP 2>/dev/null
+            # Legacy cleanup
+            ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6 2>/dev/null
+            ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6_FULL 2>/dev/null
+            # DNS redirect
+            ip6tables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+            ip6tables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+        done
+        ip6tables -t mangle -F SING_BOX6_MARK 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_MARK_FULL 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_FULL 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_MARK_NEW 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_NEW 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_MARK_FULL_NEW 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_FULL_NEW 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_MARK_VPNP 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_VPNP 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_MARK_VPNP_NEW 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_VPNP_NEW 2>/dev/null
+        # Legacy
+        ip6tables -t mangle -F SING_BOX6 2>/dev/null; ip6tables -t mangle -X SING_BOX6 2>/dev/null
+        ip6tables -t mangle -F SING_BOX6_FULL 2>/dev/null; ip6tables -t mangle -X SING_BOX6_FULL 2>/dev/null
+    fi
+    
+    # IPv4 DNS redirect
+    for iface in $ALL_IFACES; do
+        iptables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+        iptables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+    done
+    
+    # FORWARD rules for TUN
+    iptables -D FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null
+    iptables -D FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -D FORWARD -i $TUN_INTERFACE -j ACCEPT 2>/dev/null
+        ip6tables -D FORWARD -o $TUN_INTERFACE -j ACCEPT 2>/dev/null
+    fi
+    
+    # Skip MASQUERADE for TUN
+    iptables -t nat -D POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -t nat -D POSTROUTING -o $TUN_INTERFACE -j RETURN 2>/dev/null
+    fi
+    
+    # Policy routing
+    ip rule del fwmark $TUN_FWMARK lookup $TUN_TABLE 2>/dev/null
+    ip route del default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null
+    ip -6 rule del fwmark $TUN_FWMARK lookup $TUN_TABLE 2>/dev/null
+    ip -6 route del default dev $TUN_INTERFACE table $TUN_TABLE 2>/dev/null
+    ip route del blackhole default metric $KILLSWITCH_METRIC table $TUN_TABLE 2>/dev/null
+    ip -6 route del blackhole default metric $KILLSWITCH_METRIC table $TUN_TABLE 2>/dev/null
+
+    rules_unlock
+
+    # Keep ipset (DNS cache preserved)
+    
+    echo "=== Done ==="
+}
+
+# reload_devices() — DISABLED
+# reload_devices() {
+#     echo "=== Reloading devices ==="
+#     ipset flush $IPSET_DEVICES 2>/dev/null
+#     load_devices
+#     echo "=== Done ==="
+# }
+
+status() {
+    echo "=== sing-box TUN routing status ==="
+    
+    echo ""
+    echo "TUN interface ($TUN_INTERFACE):"
+    if ip link show "$TUN_INTERFACE" >/dev/null 2>&1; then
+        echo "  UP"
+        ip addr show "$TUN_INTERFACE" 2>/dev/null | grep inet | head -2
+    else
+        echo "  NOT created (sing-box not running?)"
+    fi
+    
+    echo ""
+    echo "=== IPv4 ipsets ==="
+    echo "vpn_domains (TCP+UDP):"
+    COUNT=$(ipset list $IPSET_TCPUDP 2>/dev/null | grep -c '^[0-9]' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo "vpn_domains_udp (UDP-only):"
+    COUNT=$(ipset list $IPSET_UDPONLY 2>/dev/null | grep -c '^[0-9]' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo "vpn_subnets (CIDR):"
+    COUNT=$(ipset list $IPSET_SUBNETS 2>/dev/null | grep -cE '^[0-9]|/' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo ""
+    echo "=== IPv6 ipsets ==="
+    echo "vpn_domains6 (TCP+UDP):"
+    COUNT=$(ipset list $IPSET6_TCPUDP 2>/dev/null | grep -c ':' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo "vpn_domains6_udp (UDP-only):"
+    COUNT=$(ipset list $IPSET6_UDPONLY 2>/dev/null | grep -c ':' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo "vpn_subnets6 (CIDR):"
+    COUNT=$(ipset list $IPSET6_SUBNETS 2>/dev/null | grep -c ':' || echo "0")
+    echo "  Entries: $COUNT"
+    
+    echo ""
+    echo "=== iptables chains ==="
+    echo "IPv4 SING_BOX_MARK (split):"
+    iptables -t mangle -L SING_BOX_MARK -n 2>/dev/null | head -3 || echo "  NOT exists"
+    
+    echo "IPv4 SING_BOX_MARK_FULL (fullvpn):"
+    iptables -t mangle -L SING_BOX_MARK_FULL -n 2>/dev/null | head -3 || echo "  NOT exists"
+    echo ""
+    echo "IPv4 SING_BOX_MARK_VPNP (vpnprimary):"
+    iptables -t mangle -L SING_BOX_MARK_VPNP -n 2>/dev/null | head -3 || echo "  NOT exists"
+    
+    if command -v ip6tables >/dev/null 2>&1; then
+        echo "IPv6 SING_BOX6_MARK (split):"
+        ip6tables -t mangle -L SING_BOX6_MARK -n 2>/dev/null | head -3 || echo "  NOT exists"
+        
+        echo "IPv6 SING_BOX6_MARK_FULL (fullvpn):"
+        ip6tables -t mangle -L SING_BOX6_MARK_FULL -n 2>/dev/null | head -3 || echo "  NOT exists"
+        echo ""
+        echo "IPv6 SING_BOX6_MARK_VPNP (vpnprimary):"
+        ip6tables -t mangle -L SING_BOX6_MARK_VPNP -n 2>/dev/null | head -3 || echo "  NOT exists"
+    fi
+    
+    echo ""
+    echo "=== Policy routing ==="
+    echo "IPv4 fwmark rule:"
+    ip rule show | grep "fwmark $TUN_FWMARK" || echo "  No fwmark rule"
+    echo "IPv4 route table $TUN_TABLE:"
+    ip route show table $TUN_TABLE 2>/dev/null || echo "  No routes"
+    echo "IPv6 fwmark rule:"
+    ip -6 rule show | grep "fwmark $TUN_FWMARK" || echo "  No fwmark rule"
+}
+
+case "$1" in
+    start)
+        BOOT_START="${2:-1}"
+        start
+        ;;
+    update-servers)
+        # B9: hourly from cron, and by hand
+        refresh_vpn_servers_set
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 1
+        BOOT_START="0"
+        start
+        ;;
+    restart-rules|reload)
+        # Reapply iptables rules only (without recreating ipset and warmup)
+        # Used on netfilter events from Keenetic or when changing policies
+        echo "=== Reapplying iptables rules only ==="
+        SKIP_HEAVY_OPS=1
+        export SKIP_HEAVY_OPS
+        LAN_IF=$(detect_lan_interface)
+        VPN_SERVER_IFS=$(detect_vpn_server_interfaces)
+        ALL_IFACES="$LAN_IF br0 eth0 $VPN_SERVER_IFS"
+        
+        # Add all bridge interfaces
+        for br in $(get_all_bridge_interfaces); do
+            case "$ALL_IFACES" in
+                *"$br"*) ;;
+                *) ALL_IFACES="$ALL_IFACES $br" ;;
+            esac
+        done
+        
+        # Old MARK jumps and chains are not removed up front any more: start() swaps in
+        # freshly built chains and drops jumps that no longer match the policy.
+
+        SKIP_WARMUP=1
+        export SKIP_WARMUP
+        start
+        ;;
+    quick-restore)
+        # First step of the netfilter hook (B12): our chains back at once if the firmware wiped them
+        quick_restore iptables iptables-restore $MANGLE_SNAPSHOT SING_BOX_MARK
+        command -v ip6tables >/dev/null 2>&1 && quick_restore ip6tables ip6tables-restore $MANGLE6_SNAPSHOT SING_BOX6_MARK
+        # and the way into the tunnel, which lives outside our own chains
+        ip link show $TUN_INTERFACE >/dev/null 2>&1 && tun_passage_restore >/dev/null
+        ;;
+    passage-ok)
+        # For the netfilter hook: 0 when the FORWARD/nat lines to the tunnel are in place
+        # (exit here: the script otherwise ends with exit 0)
+        tun_passage_ok
+        exit $?
+        ;;
+    # reload-devices) — DISABLED
+    #     reload_devices
+    #     ;;
+    warmup)
+        # Only warm-up domains (is called from vpn.cgi in background)
+        warmup_domains
+        ;;
+    status)
+        status
+        ;;
+    update-cache)
+        # Ruchnoe update cache segments (is called from web UIbut)
+        update_segments_cache
+        ;;
+    reload-subnets)
+        # Perezagruzka ipset for subnets (is called when switching auto_update)
+        echo "Reloading subnets into ipset..."
+        load_subnets
+        echo "Subnets reloaded"
+        ;;
+    apply-ipv6-pending)
+        # Obrabotka deferred zaprosa on izmenenie IPv6 (is called from cron)
+        PENDING_FILE="/tmp/ipv6-pending"
+        if [ -f "$PENDING_FILE" ]; then
+            IPV6_CMD=$(cat "$PENDING_FILE" 2>/dev/null)
+            rm -f "$PENDING_FILE"
+            if [ -n "$IPV6_CMD" ]; then
+                echo "Processing pending IPv6 request: $IPV6_CMD"
+                case "$IPV6_CMD" in
+                    enabled)
+                        keenetic_cmd "interface ISP ipv6 address auto"
+                        keenetic_cmd "interface ISP ipv6 prefix delegation"
+                        keenetic_cmd "system configuration save"
+                        echo "IPv6 enabled"
+                        ;;
+                    disabled)
+                        keenetic_cmd "no interface ISP ipv6 address auto"
+                        keenetic_cmd "no interface ISP ipv6 prefix delegation"
+                        keenetic_cmd "system configuration save"
+                        echo "IPv6 disabled"
+                        ;;
+                esac
+            fi
+        fi
+        ;;
+    apply-ipv6)
+        # Upravlenie IPv6 in ndmc (is called when activation VPN configuration)
+        # Argument: enabled|disabled
+        IPV6_ACTION="$2"
+        echo "=== Applying IPv6 settings: $IPV6_ACTION ==="
+        case "$IPV6_ACTION" in
+            enabled|1|true)
+                keenetic_cmd "interface ISP ipv6 address auto"
+                keenetic_cmd "interface ISP ipv6 prefix delegation"
+                keenetic_cmd "system configuration save"
+                echo "  IPv6 enabled on ISP interface"
+                ;;
+            disabled|0|false|"")
+                keenetic_cmd "no interface ISP ipv6 address auto"
+                keenetic_cmd "no interface ISP ipv6 prefix delegation"
+                keenetic_cmd "system configuration save"
+                echo "  IPv6 disabled on ISP interface"
+                ;;
+    *)
+                echo "Unknown action: $IPV6_ACTION (use: enabled|disabled)"
+                exit 1
+                ;;
+        esac
+        ;;
+    get-ipv6-status)
+        # Get tekushchiy status IPv6
+        local isp_info=$(keenetic_show "show/interface/ISP" "show interface ISP")
+        if echo "$isp_info" | grep -q 'ipv6.*disabled\|"ipv6".*false'; then
+            echo "disabled"
+        else
+            echo "enabled"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|restart-rules|reload|warmup|update-cache|apply-ipv6|get-ipv6-status|status}"
+        exit 1
+        ;;
+esac
+
+exit 0

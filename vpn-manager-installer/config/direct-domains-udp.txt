@@ -1,0 +1,5 @@
+# =============================================================================
+# Domain list for UDP-only DIRECT routing (second list set)
+# In 'VPN primary' mode only UDP to these domains goes direct, TCP stays in VPN
+# Empty for now: the option exists, entries are added when needed
+# =============================================================================

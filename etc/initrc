@@ -1,0 +1,102 @@
+#!/bin/sh
+# =============================================================================
+# initrc: Hook for Keenetic OPKG
+# First installs Entware, then VPN Manager
+# =============================================================================
+
+log() {
+    logger -t vpn-manager-initrc "$1"
+}
+
+log "initrc started"
+
+# =============================================================================
+# Step 1: Install Entware (if not installed yet)
+# =============================================================================
+
+# doinstall exists only until Entware installation is complete
+if [ -x /opt/etc/init.d/doinstall ]; then
+    log "Entware not installed, starting doinstall..."
+    
+    # doinstall runs /opt/bin/install in background and exits
+    /opt/etc/init.d/doinstall
+    
+    # Wait for install to complete (it removes itself at the end)
+    log "Waiting for Entware installation to complete..."
+    wait_count=0
+    while [ -f /opt/bin/install ]; do
+        sleep 5
+        wait_count=$((wait_count + 1))
+        # Timeout 10 minutes (120 * 5 sec)
+        if [ $wait_count -ge 120 ]; then
+            log "ERROR: Entware installation timeout"
+            exit 1
+        fi
+    done
+    
+    log "Entware installation complete"
+    
+    # Entware installer already registered rc.unslung as initrc
+    # Remove ourselves to avoid conflicts
+    log "Removing custom initrc (rc.unslung is now registered)"
+    rm -f /opt/etc/initrc
+else
+    log "Entware already installed (no doinstall found)"
+    # New scheme: Keenetic installs via npkg in parallel
+    # Wait for opkg to become available
+    if [ ! -x /opt/bin/opkg ]; then
+        log "Waiting for opkg to become available (npkg scheme)..."
+        wait_count=0
+        while [ ! -x /opt/bin/opkg ]; do
+            sleep 5
+            wait_count=$((wait_count + 1))
+            if [ $wait_count -ge 120 ]; then
+                log "ERROR: opkg installation timeout"
+                exit 1
+            fi
+        done
+        log "opkg is ready"
+    fi
+fi
+
+# =============================================================================
+# Step 2: Start Entware services
+# =============================================================================
+
+# rc.unslung appears after installing opt-ndmsv2
+if [ -x /opt/etc/init.d/rc.unslung ]; then
+    log "Starting Entware services (rc.unslung)..."
+    /opt/etc/init.d/rc.unslung start
+    if [ $? -eq 0 ]; then
+        log "rc.unslung started successfully"
+    else
+        log "rc.unslung start failed (exit code $?)"
+    fi
+else
+    log "WARNING: rc.unslung not found"
+fi
+
+# =============================================================================
+# Step 3: Autoinstall VPN Manager (if not installed yet)
+# =============================================================================
+
+AUTOINSTALL="/opt/etc/init.d/S01autoinstall"
+MARKER="/opt/etc/.vpn-manager-installed"
+
+if [ -f "$MARKER" ]; then
+    log "VPN Manager already installed, skipping autoinstall"
+elif [ -f "$AUTOINSTALL" ]; then
+    # Fix CRLF and permissions (after copying from Windows)
+    sed -i 's/\r$//' "$AUTOINSTALL" 2>/dev/null
+    chmod +x "$AUTOINSTALL" 2>/dev/null
+    
+    log "Starting VPN Manager autoinstall..."
+    # Run in background so initrc can finish
+    sh "$AUTOINSTALL" &
+    log "S01autoinstall launched in background"
+else
+    log "No autoinstall script found at $AUTOINSTALL"
+fi
+
+log "initrc finished"
+exit 0

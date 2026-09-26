@@ -1,0 +1,42 @@
+#!/bin/sh
+# Keep the system log in RAM instead of on the USB drive.
+#
+# syslog-ng writes /opt/var/log/messages line by line, around the clock; on a cheap
+# flash drive that is hundreds of megabytes a day and wears it out. The file lives
+# in /tmp (RAM) instead and the old path becomes a symlink to it, so everything that
+# reads /opt/var/log/messages keeps working. The log starts empty after a reboot;
+# syslog-rotate.sh keeps a small daily copy of warnings and errors on the drive.
+#
+# Runs before S01syslog-ng: the RAM directory must exist before syslog-ng opens it.
+
+RAM_LOG_DIR="/tmp/log"
+RAM_LOG="$RAM_LOG_DIR/messages"
+FLASH_LOG="/opt/var/log/messages"
+
+ERRORS_LOG="/opt/var/log/last-errors.log"
+
+start() {
+    # Fresh boot (nothing in RAM yet): keep the errors copy of the previous boot
+    if [ ! -f "$RAM_LOG" ] && [ -f "$ERRORS_LOG" ]; then
+        mv -f "$ERRORS_LOG" "${ERRORS_LOG%.log}.prev.log"
+    fi
+    mkdir -p "$RAM_LOG_DIR" "$(dirname "$FLASH_LOG")"
+    # First run on a router that still logs to the drive: carry the recent tail over
+    if [ -f "$FLASH_LOG" ] && [ ! -L "$FLASH_LOG" ]; then
+        tail -n 2000 "$FLASH_LOG" >> "$RAM_LOG" 2>/dev/null
+        rm -f "$FLASH_LOG"
+    fi
+    [ -L "$FLASH_LOG" ] || ln -sf "$RAM_LOG" "$FLASH_LOG"
+    touch "$RAM_LOG"
+}
+
+case "$1" in
+    start|restart)
+        start
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        ;;
+esac

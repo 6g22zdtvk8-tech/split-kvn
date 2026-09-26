@@ -1,0 +1,66 @@
+#!/bin/sh
+# VPN Manager auto-install
+# Compatible with both old (doinstall) and new (npkg) Keenetic schemes
+
+MARKER="/opt/etc/.vpn-manager-installed"
+INSTALLER="/opt/vpn-manager-installer/install-singbox.sh"
+
+log_msg() {
+    logger -t vpn-manager-autoinstall "$1"
+}
+
+# Already installed - exit
+[ -f "$MARKER" ] && exit 0
+
+log_msg "Starting (background mode)"
+
+# Run everything in background to not block Keenetic
+# This allows Keenetic to continue with Entware installation
+(
+    # Wait for Entware installation to complete
+    # Criterion: rc.unslung appears (created by opt-ndmsv2 package)
+    # Old scheme: rc.unslung already exists when S01autoinstall runs
+    # New scheme: rc.unslung appears after Entware installation
+    wait_count=0
+    while [ ! -x /opt/etc/init.d/rc.unslung ]; do
+        sleep 15
+        wait_count=$((wait_count + 1))
+        if [ $wait_count -ge 40 ]; then
+            log_msg "ERROR: timeout waiting for Entware (10 min)"
+            exit 1
+        fi
+        [ $((wait_count % 4)) -eq 0 ] && log_msg "Waiting for Entware... ($wait_count)"
+    done
+    
+    log_msg "Entware ready, waiting for network..."
+    
+    # Wait for network
+    sleep 10
+wait_count=0
+while [ $wait_count -lt 60 ]; do
+        ping -c 1 8.8.8.8 >/dev/null 2>&1 && break
+    sleep 5
+    wait_count=$((wait_count + 1))
+done
+
+    # Fix CRLF and permissions
+    [ -f "$INSTALLER" ] && sed -i 's/\r$//' "$INSTALLER" && chmod +x "$INSTALLER"
+
+    # Run installer
+if [ -x "$INSTALLER" ]; then
+        log_msg "Running installer..."
+        "$INSTALLER" 2>&1 | logger -t vpn-manager-installer
+
+    if [ $? -eq 0 ]; then
+        touch "$MARKER"
+        log_msg "VPN Manager installed successfully"
+        rm -f /opt/etc/init.d/S01autoinstall
+    else
+            log_msg "Installation failed"
+    fi
+else
+        log_msg "ERROR: Installer not found at $INSTALLER"
+fi
+) &
+
+exit 0

@@ -1,0 +1,255 @@
+# =============================================================================
+# Domain list for DIRECT routing (second list set)
+# Format: one domain per line (dnsmasq will automatically include subdomains)
+# Comments start with #
+# Used by 'VPN primary' mode: everything goes via VPN, these domains go direct.
+# A more specific entry wins: a site listed in the main VPN lists goes via VPN
+# even if it falls under a whole zone here (e.g. a blocked site on .ru).
+# Services living on .ru/.su/.рф are covered by the zones; below are the
+# domains of Russian services outside those zones (sites, apps, CDNs).
+# =============================================================================
+
+# === National zones ===
+ru
+su
+# .рф
+xn--p1ai
+# .рус
+xn--p1acf
+# .москва
+xn--80adxhks
+# .дети
+xn--d1acj3b
+
+# === VK group (VK, OK, Mail.ru, VK Play, TamTam) ===
+vk.com
+vk.me
+vk.company
+vkontakte.com
+userapi.com
+vkuser.net
+vk-portal.net
+vkuseraudio.net
+vkuservideo.net
+vkplay.live
+mycdn.me
+mradx.net
+tamtam.chat
+
+# === Yandex ===
+yandex.net
+yandex.com
+yastatic.net
+yandex.cloud
+yandexcloud.net
+yandexadexchange.net
+
+# === Banks and payments ===
+sberbank.com
+tbank-online.com
+qiwi.com
+
+# === Marketplaces, classifieds, maps ===
+wbstatic.net
+avito.st
+2gis.com
+
+# === Media and streaming ===
+okko.tv
+premier.one
+more.tv
+ivi.tv
+1tv.com
+megafon.tv
+
+# === Software and services ===
+kaspersky.com
+drweb.com
+1c-bitrix.com
+bitrix24.com
+amocrm.com
+
+# === Marketplaces, retail, delivery, travel, jobs ===
+ozon.com
+ozon.tech
+ozon.dev
+ozon.app
+ozon.travel
+ozonusercontent.com
+wbcontent.net
+paywb.com
+wibes.com
+sberauto.com
+x5.com
+chizhik.club
+5post.market
+okolo.app
+magnit.com
+lenta.com
+lenta.tech
+fix-price.com
+ostin.com
+dodopizza.com
+dodois.io
+dodostatic.net
+detmir.st
+detmir.market
+acmvid.com
+diginetica.net
+aplaut.io
+lmru.tech
+autoru.me
+cm.expert
+cian.site
+cdek.shopping
+flowwow.com
+aviasales.com
+avs.io
+travelpayouts.com
+tutu.tech
+worldota.net
+fastrovok.net
+superjob.tech
+youdo.com
+
+# === Mobile operators, ISPs, IPTV ===
+mts-ws.net
+mts.investments
+megafon.com
+beeline.tv
+smotreshka.tv
+24h.tv
+
+# === Banks and payments (more) ===
+sber.pro
+t-tech.team
+t-tech.dev
+unidraw.io
+vtb.com
+alfabank.st
+alfa.me
+gazprombank.tech
+gazprombank.investments
+newton.investments
+tochka.com
+bank131.com
+best2pay.net
+rbsgate.com
+nspk.com
+moex.com
+donate.stream
+robokassa.com
+robo.market
+koronapay.com
+korona.com
+netmonet.co
+tips.tips
+
+# === Government and public services ===
+emias.info
+gorzdrav.org
+edu22.info
+volganet.net
+fincult.info
+sirius.online
+lizaalert.org
+
+# === VK ecosystem (more): VK Video, Mail.ru, VK Cloud, Rutube ===
+vkuseraudio.com
+vkuservideo.com
+vkuserlive.net
+cdn-vk.net
+vkcdnservice.com
+vk.cc
+vk.link
+mvk.com
+vkmessenger.com
+vkmessenger.app
+vkpay.com
+vk-apps.com
+vk.team
+vkcs.cloud
+bizmrg.com
+smailru.net
+vmailru.net
+viqeo.tv
+boosty.to
+donationalerts.com
+yclients.com
+rutube.sport
+yappy.media
+
+# === Online cinemas, streaming, music, books ===
+clstorage.net
+okko.sport
+okkoapi.tv
+ivicdn.tv
+restream-media.net
+nowdrm.co
+amediateka.tech
+trbcdn.net
+cdnvideohub.com
+uma.media
+kinescope.io
+kinescopecdn.net
+zvuk.com
+zvuk-b2b.com
+litres.com
+ren.tv
+kinorium.com
+promodj.com
+
+# === Yandex (more) ===
+yastat.net
+naydex.net
+static-storage.net
+turbopages.org
+yandexwebcache.net
+shedevrum.ai
+sourcecraft.dev
+ya.cc
+
+# === Media ===
+tass.com
+interfax.com
+rudata.info
+rbc.group
+ramblergroup.com
+lenta.news
+ixbt.com
+gismeteo.com
+meteofor.com
+mel.fm
+yaplakal.com
+
+# === Software, SaaS, hosting, CDN ===
+1cfresh.com
+1c.link
+1c.market
+kontur-inc.com
+kontur.host
+ptsecurity.com
+standoff365.com
+kaspersky-labs.com
+selectel.com
+selcdn.net
+timeweb.cloud
+timeweb.com
+timeweb.net
+reg.com
+reg.cloud
+beget.com
+t1.cloud
+myoffice.team
+express.ms
+mfa.center
+tilda.ws
+tilda.cc
+tildacdn.com
+jivosite.com
+jivo.chat
+carrotquest.io
+carrotquest.app
+mindbox.cloud
+servicepipe.tech
+ngenix.net

@@ -1,0 +1,23 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "",
+      "first_login": false,
+      "created_at": "",
+      "last_login": "",
+      "failed_attempts": 0,
+      "locked_until": null
+    }
+  ],
+  "settings": {
+    "auth_mode": "disabled",
+    "recovery_code": "",
+    "onboarding_shown": false,
+    "min_password_length": 8,
+    "max_failed_attempts": 5,
+    "lockout_duration_minutes": 15,
+    "session_timeout_hours": 24
+  }
+}
+

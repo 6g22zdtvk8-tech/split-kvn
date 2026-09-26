@@ -1,0 +1,7 @@
+# =============================================================================
+# IP subnets for UDP-only VPN routing
+# Format: CIDR (e.g., 91.108.4.0/22)
+# TCP traffic to these subnets will NOT go through VPN, only UDP
+# Use for services where low latency matters for regular traffic,
+# but voice/video calls should go through VPN
+# =============================================================================

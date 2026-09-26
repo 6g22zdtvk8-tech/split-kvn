@@ -1,0 +1,5 @@
+# =============================================================================
+# List of domains for VPN routing
+# Format: one domain per line (dnsmasq will add subdomains automatically)
+# Comments start with #
+# =============================================================================

@@ -1,0 +1,4 @@
+# Все shell-скрипты и initrc в Unix формате (LF)
+*.sh text eol=lf
+initrc text eol=lf
+S01autoinstall text eol=lf

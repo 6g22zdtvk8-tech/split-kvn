@@ -1,0 +1,321 @@
+#!/bin/sh
+# sing-box init script with autostart support and auto-restart on crash
+# All logging via syslog (syslog-ng)
+
+# Enable support for deprecated WireGuard outbound (required in sing-box 1.11+)
+export ENABLE_DEPRECATED_WIREGUARD_OUTBOUND=true
+
+AUTOSTART_FLAG="/opt/etc/vpn-manager/autostart-enabled"
+SINGBOX_BIN="/opt/bin/sing-box"
+SINGBOX_CONFIG="/opt/etc/sing-box/config.json"
+PIDFILE="/opt/var/run/sing-box.pid"
+WRAPPER_PIDFILE="/opt/var/run/sing-box-wrapper.pid"
+STOP_FLAG="/opt/var/run/sing-box.stopped"
+DESC="Sing-box proxy"
+RESTART_DELAY=5
+VPN_MANAGER_HOME="/opt/etc/vpn-manager"
+SYSLOG_ROTATE_SCRIPT="/opt/bin/syslog-rotate.sh"
+CRONTAB_FILE="/opt/var/spool/cron/crontabs/root"
+
+# Logging via syslog
+log_boot() {
+    logger -t singbox-boot "$1"
+}
+
+# Reconcile the VPN server user list with the credentials file.
+#
+# sing-box authenticates against its own config, while the panel reads and edits
+# vpnserver-credentials.json. The two are only brought together when a user is
+# added, renamed or removed through the UI — so a config regenerated underneath
+# them (a fresh install, a restore, the Shadowsocks-to-VLESS migration) leaves
+# sing-box knowing a different set of users than the panel shows. The panel then
+# hands out QR codes the server rejects with "unknown UUID", which looks to the
+# user like a network fault rather than an auth failure.
+sync_vpnserver_users() {
+    creds="$VPN_MANAGER_HOME/vpnserver-credentials.json"
+
+    [ -f "$creds" ] || return 0
+    [ -f "$SINGBOX_CONFIG" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    wanted=$(jq -c '[.users[]? | select(.suspended != true) | {name, uuid}]' "$creds" 2>/dev/null)
+    # An empty or unreadable credentials file must never wipe the server's users.
+    [ -n "$wanted" ] || return 0
+    [ "$wanted" = "[]" ] && return 0
+    [ "$wanted" = "null" ] && return 0
+
+    current=$(jq -c '[.inbounds[]? | select(.tag == "ss-server-in") | .users[]? | {name, uuid}]' \
+        "$SINGBOX_CONFIG" 2>/dev/null)
+    [ "$wanted" = "$current" ] && return 0
+
+    tmp="/tmp/singbox-usersync.$$"
+    jq --argjson users "$wanted" \
+        '(.inbounds[] | select(.tag == "ss-server-in")).users = $users' \
+        "$SINGBOX_CONFIG" > "$tmp" 2>/dev/null
+
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$SINGBOX_CONFIG"
+        chmod 644 "$SINGBOX_CONFIG"
+        log_boot "VPN server users synced from credentials ($(echo "$wanted" | jq 'length') active)"
+    else
+        rm -f "$tmp"
+        log_boot "VPN server user sync skipped: jq produced no output"
+    fi
+}
+
+# Ensure cron jobs exist
+ensure_cron_jobs() {
+    if [ ! -f "$CRONTAB_FILE" ]; then
+        mkdir -p "$(dirname "$CRONTAB_FILE")"
+        touch "$CRONTAB_FILE"
+    fi
+    
+    local changed=0
+    
+    # Log upkeep (every 10 minutes); older installs ran it hourly
+    if grep -q "^0 \* \* \* \* .*syslog-rotate" "$CRONTAB_FILE" 2>/dev/null; then
+        grep -v "syslog-rotate" "$CRONTAB_FILE" > "${CRONTAB_FILE}.tmp" && mv "${CRONTAB_FILE}.tmp" "$CRONTAB_FILE"
+    fi
+    if ! grep -q "syslog-rotate" "$CRONTAB_FILE" 2>/dev/null; then
+        echo "*/10 * * * * $SYSLOG_ROTATE_SCRIPT >/dev/null 2>&1" >> "$CRONTAB_FILE"
+        changed=1
+    fi
+    
+    # Subscription update (hourly)
+    if ! grep -q "subscription-update.sh" "$CRONTAB_FILE" 2>/dev/null; then
+        echo "0 * * * * $VPN_MANAGER_HOME/scripts/subscription-update.sh >/dev/null 2>&1" >> "$CRONTAB_FILE"
+        changed=1
+    fi
+    
+    # Segments cache update (every 5 min)
+    if ! grep -q "update-cache" "$CRONTAB_FILE" 2>/dev/null; then
+        echo "*/5 * * * * /opt/etc/init.d/S98singbox-rules update-cache >/dev/null 2>&1" >> "$CRONTAB_FILE"
+        changed=1
+    fi
+    
+    # IPv6 pending (every minute)
+    if ! grep -q "apply-ipv6-pending" "$CRONTAB_FILE" 2>/dev/null; then
+        echo "* * * * * /opt/etc/init.d/S98singbox-rules apply-ipv6-pending >/dev/null 2>&1" >> "$CRONTAB_FILE"
+        changed=1
+    fi
+    
+    if [ "$changed" = "1" ]; then
+        chmod 600 "$CRONTAB_FILE"
+        /opt/etc/init.d/S10cron restart >/dev/null 2>&1 || true
+        log_boot "Cron jobs restored"
+    fi
+}
+
+wait_for_network() {
+    # Wait for default route to appear (max 30 seconds)
+    local max_wait=30
+    local waited=0
+    while [ $waited -lt $max_wait ]; do
+        if ip route | grep -q "^default"; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    log_boot "warning - network not ready after ${max_wait}s"
+    return 1
+}
+
+start() {
+    # On autostart check flag
+    if [ "$BOOT_START" = "1" ] && [ ! -f "$AUTOSTART_FLAG" ]; then
+        echo "$DESC: autostart disabled, skipping"
+        return 0
+    fi
+    
+    # On boot: ensure cron jobs exist
+    if [ "$BOOT_START" = "1" ]; then
+        ensure_cron_jobs
+    fi
+    
+    # Check if wrapper is already running
+    if [ -f "$WRAPPER_PIDFILE" ]; then
+        WRAPPER_PID=$(cat "$WRAPPER_PIDFILE")
+        if kill -0 "$WRAPPER_PID" 2>/dev/null; then
+            echo "$DESC already running (wrapper PID: $WRAPPER_PID)"
+        return 0
+        else
+            echo "Cleaning up stale wrapper PID file"
+            rm -f "$WRAPPER_PIDFILE"
+        fi
+    fi
+    
+    # Remove stop flag (if was)
+    rm -f "$STOP_FLAG"
+
+    # Bring the server's user list up to date before sing-box reads the config
+    sync_vpnserver_users
+
+    echo "Starting $DESC with auto-restart wrapper..."
+    
+    # Start entire process in background (so init script finishes quickly)
+    (
+        # On boot wait for network to come up
+        if [ "$BOOT_START" = "1" ]; then
+            log_boot "Waiting for network..."
+            wait_for_network
+            log_boot "Network ready"
+        fi
+        
+        # Make sure iptables rules are applied
+        if [ -x /opt/etc/init.d/S98singbox-rules ]; then
+            if [ "$BOOT_START" = "1" ]; then
+                log_boot "Applying iptables rules (with warmup)..."
+                /opt/etc/init.d/S98singbox-rules start 2>&1 | logger -t singbox-rules
+            else
+                log_boot "Applying iptables rules (no warmup)..."
+                /opt/etc/init.d/S98singbox-rules restart-rules 2>&1 | logger -t singbox-rules
+            fi
+        fi
+        
+        # Main loop with auto-restart
+        while true; do
+            # Check stop flag before start
+            if [ -f "$STOP_FLAG" ]; then
+                log_boot "Stop flag found, exiting wrapper"
+                rm -f "$PIDFILE" "$WRAPPER_PIDFILE"
+                exit 0
+            fi
+            
+            # Kill switch (same as S98singbox-rules): until singbox0 is back, marked
+            # traffic is dropped instead of leaking out via WAN.
+            ip route replace blackhole default metric 4000 table 100 2>/dev/null
+            ip -6 route replace blackhole default metric 4000 table 100 2>/dev/null
+
+            log_boot "Starting sing-box..."
+            # Room for open connections: the default 4096 file descriptors ran out on
+            # 14.09 (VPN-server clients plus hanging connections), and then every new
+            # connection failed with "too many open files" (B16)
+            ulimit -n 16384 2>/dev/null || ulimit -n 8192 2>/dev/null
+            # sing-box output goes to syslog via pipe
+            $SINGBOX_BIN run -c "$SINGBOX_CONFIG" 2>&1 | logger -t sing-box &
+            SINGBOX_PID=$!
+            echo $SINGBOX_PID > "$PIDFILE"
+            
+            # Wait for TUN interface to appear, then add policy route
+            (
+                TUN_IF="singbox0"
+                TUN_TABLE=100
+                TUN_FWMARK="0x100"
+                for i in 1 2 3 4 5 6 7 8 9 10; do
+                    if ip link show "$TUN_IF" >/dev/null 2>&1; then
+                        ip route replace default dev "$TUN_IF" table $TUN_TABLE 2>/dev/null
+                        ip -6 route replace default dev "$TUN_IF" table $TUN_TABLE 2>/dev/null
+                        logger -t singbox-boot "TUN route added: table $TUN_TABLE -> $TUN_IF"
+                        break
+                    fi
+                    sleep 1
+                done
+            ) &
+            
+            # Wait for sing-box completion
+            wait $SINGBOX_PID
+            EXIT_CODE=$?
+            
+            # Check stop flag after completion
+            if [ -f "$STOP_FLAG" ]; then
+                log_boot "Stopped by user, not restarting"
+                rm -f "$PIDFILE" "$WRAPPER_PIDFILE"
+                exit 0
+            fi
+            
+            log_boot "sing-box exited with code $EXIT_CODE, restarting in ${RESTART_DELAY}s..."
+            sleep $RESTART_DELAY
+        done
+    ) </dev/null >/dev/null 2>&1 &
+    
+    echo $! > "$WRAPPER_PIDFILE"
+    echo "$DESC starting in background..."
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    
+    # Create stop flag so wrapper doesn't restart
+    touch "$STOP_FLAG"
+    
+    # Stop sing-box
+    if [ -f "$PIDFILE" ]; then
+        local pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null
+            sleep 1
+            # Force kill if still running
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null
+            fi
+        fi
+        rm -f "$PIDFILE"
+    fi
+    
+    # Stop wrapper with active wait
+    if [ -f "$WRAPPER_PIDFILE" ]; then
+        local wpid=$(cat "$WRAPPER_PIDFILE")
+        if kill -0 "$wpid" 2>/dev/null; then
+        kill "$wpid" 2>/dev/null
+            
+            # Active wait for wrapper termination (up to 5 seconds)
+            local waited=0
+            while [ $waited -lt 5 ]; do
+                if ! kill -0 "$wpid" 2>/dev/null; then
+                    echo "Wrapper process $wpid terminated"
+                    break
+                fi
+                sleep 1
+                waited=$((waited + 1))
+            done
+            
+            # Force kill if still running
+            if kill -0 "$wpid" 2>/dev/null; then
+                echo "Force killing wrapper process $wpid"
+                kill -9 "$wpid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$WRAPPER_PIDFILE"
+    fi
+    
+    # Cleanup any remaining sing-box processes
+    killall sing-box 2>/dev/null || true
+    
+    log_boot "sing-box stopped"
+    echo "$DESC stopped"
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "$DESC is running (PID: $(cat $PIDFILE))"
+        return 0
+    else
+        echo "$DESC is not running"
+        return 1
+    fi
+}
+
+case "$1" in
+    start)
+        log_boot "S99sing-box called with args: $*"
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 1
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        # Boot start (called without args or with empty string)
+        BOOT_START=1
+        log_boot "S99sing-box called with args: $*"
+        start
+        ;;
+esac

@@ -1,0 +1,18 @@
+{
+  "servers": [
+    {
+      "server": "0.0.0.0",
+      "server_port": 8388,
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "SERVER_KEY_PLACEHOLDER",
+      "users": [
+        {
+          "name": "default",
+          "password": "USER_KEY_PLACEHOLDER"
+        }
+      ]
+    }
+  ],
+  "mode": "tcp_and_udp"
+}
+

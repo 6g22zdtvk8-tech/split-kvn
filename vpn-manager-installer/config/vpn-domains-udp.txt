@@ -1,0 +1,5 @@
+# =============================================================================
+# List of domains for UDP-only VPN routing
+# TCP traffic to these domains goes directly
+# Use for: QUIC, video calls, games, messengers
+# =============================================================================

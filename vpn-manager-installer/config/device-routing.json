@@ -1,0 +1,8 @@
+{
+  "devices": [],
+  "settings": {
+    "local_network": "auto",
+    "ss_redir_port": 1181
+  }
+}
+

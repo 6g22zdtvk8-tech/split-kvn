@@ -1,0 +1,18 @@
+# Все shell-скрипты в Unix формате (LF)
+*.sh text eol=lf
+S98singbox-rules text eol=lf
+S99sing-box text eol=lf
+scripts/S01autoinstall text eol=lf
+scripts/initrc text eol=lf
+*.cgi text eol=lf
+common.sh text eol=lf
+
+# Конфиги тоже в LF
+*.conf text eol=lf
+
+# Файлы данных (домены, подсети)
+vpn-domains.txt text eol=lf
+vpn-domains-udp.txt text eol=lf
+vpn-subnets.txt text eol=lf
+vpn-subnets-udp.txt text eol=lf
+

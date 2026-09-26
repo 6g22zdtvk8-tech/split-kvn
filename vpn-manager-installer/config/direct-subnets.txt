@@ -1,0 +1,6 @@
+# =============================================================================
+# IP subnets for DIRECT routing (second list set)
+# Format: CIDR (e.g., 198.51.100.0/24)
+# For services that use IP directly (without DNS)
+# Empty for now: the option exists, entries are added when needed
+# =============================================================================

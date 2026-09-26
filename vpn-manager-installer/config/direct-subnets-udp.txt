@@ -1,0 +1,6 @@
+# =============================================================================
+# IP subnets for UDP-only DIRECT routing (second list set)
+# Format: CIDR (e.g., 198.51.100.0/24)
+# In 'VPN primary' mode only UDP to these subnets goes direct, TCP stays in VPN
+# Empty for now: the option exists, entries are added when needed
+# =============================================================================
