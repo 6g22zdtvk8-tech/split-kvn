@@ -542,6 +542,7 @@
             'settings.updateSourceHint': 'Address of the published release manifest. Empty means updates are switched off entirely.',
             'settings.updateHeld': 'This release is waiting to be cleared for rollout. "Update now" installs it anyway.',
             'settings.updateRunning': 'Updating, usually under a minute. The panel may reload briefly.',
+            'settings.updating': 'Updating…',
             'settings.updateNone': 'No newer release published.',
             'settings.updateNoSource': 'Update source is not set.',
             'settings.confirmUpdateNow': 'Install the available release now? A backup is taken first and rolled back if it fails.',
@@ -1662,6 +1663,7 @@
             'settings.updateSourceHint': 'Адрес опубликованного описания выпусков. Пусто — обновления выключены совсем.',
             'settings.updateHeld': 'Этот выпуск ждёт разрешения на раскатку. Кнопка «Обновить сейчас» поставит его всё равно.',
             'settings.updateRunning': 'Идёт обновление, обычно меньше минуты. Панель может ненадолго перезагрузиться.',
+            'settings.updating': 'Обновляется…',
             'settings.updateNone': 'Новых выпусков нет.',
             'settings.updateNoSource': 'Источник обновлений не задан.',
             'settings.confirmUpdateNow': 'Поставить доступный выпуск сейчас? Сначала снимается резервная копия, при сбое откат.',
@@ -5711,6 +5713,21 @@
         el.className = 'form-hint' + (cls ? ' ' + cls : '');
     }
 
+    // "Update now" spins while the router is updating
+    function setApplyBusy(busy) {
+        const btn = $('#btn-update-apply');
+        if (!btn) return;
+        if (busy) {
+            btn.hidden = false;
+            btn.disabled = true;
+            btn.classList.add('btn-loading');
+            btn.innerHTML = `<span class="btn-spinner"></span> ${t('settings.updating')}`;
+        } else if (btn.classList.contains('btn-loading')) {
+            btn.classList.remove('btn-loading');
+            btn.textContent = t('settings.updateNow');
+        }
+    }
+
     function renderUpdateState(d) {
         const cb = $('#settings-auto-update');
         if (cb) cb.checked = d.auto_update !== false;
@@ -5733,13 +5750,14 @@
 
         if (d.running) {
             setUpdateLine(statusEl, t('settings.updateRunning'), 'text-warning');
-            if (btnApply) { btnApply.disabled = true; btnApply.hidden = false; }
+            setApplyBusy(true);
             if (btnCheck) btnCheck.disabled = true;
             startUpdatePolling();
             return;
         }
 
         stopUpdatePolling();
+        setApplyBusy(false);
         // Nothing newer to install: no button that looks pressable but does nothing
         if (btnApply) { btnApply.disabled = !newer; btnApply.hidden = !newer; }
         if (btnCheck) btnCheck.disabled = false;
@@ -5801,9 +5819,8 @@
     async function applyUpdateNow() {
         if (!confirm(t('settings.confirmUpdateNow'))) return;
         // Show the update as running right away, not when the router answers
-        const btnApply = $('#btn-update-apply');
         const btnCheck = $('#btn-update-check');
-        if (btnApply) btnApply.disabled = true;
+        setApplyBusy(true);
         if (btnCheck) btnCheck.disabled = true;
         setUpdateLine($('#update-status'), t('settings.updateRunning'), 'text-warning');
         try {

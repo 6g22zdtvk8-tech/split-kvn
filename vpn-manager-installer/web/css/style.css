@@ -273,6 +273,11 @@ body {
     opacity: 0.45;
 }
 
+.update-actions .btn.btn-loading:disabled {
+    opacity: 0.9;
+    gap: 0.5rem;
+}
+
 .update-actions [hidden] {
     display: none;
 }
