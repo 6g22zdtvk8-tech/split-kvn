@@ -596,6 +596,60 @@ multi_restart_vpn() {
     check_ss_running
 }
 
+# Ticked servers of one subscription, with what identifies them: taken before a
+# refresh so the group can follow a server that comes back under a new id.
+# Prints [{id, name, server, server_port}]
+multi_members_of_subscription() {
+    local sub="$1" id f out="["
+    for id in $(multi_state | jq -r '.members[]'); do
+        f="$VPN_CONFIGS_DIR/$id.json"
+        [ -f "$f" ] || continue
+        [ "$(jq -r '.subscription_id // empty' "$f" 2>/dev/null)" = "$sub" ] || continue
+        [ "$out" = "[" ] || out="$out,"
+        out="$out$(jq -c '{id, name, server, server_port}' "$f")"
+    done
+    echo "$out]"
+}
+
+# After a refresh: a ticked server whose file is gone is replaced by the server of the
+# same subscription with the same name, address and port (then the same name alone).
+# Without this the group silently shrinks every time a provider reshuffles ids.
+multi_follow_members() {
+    local sub="$1" before="$2"
+    [ -n "$before" ] && [ "$before" != "[]" ] || return 0
+    local state=$(multi_state) changed=0 n i old id name srv port new f
+    n=$(printf '%s' "$before" | jq 'length')
+    i=0
+    while [ $i -lt $n ]; do
+        old=$(printf '%s' "$before" | jq -c ".[$i]")
+        id=$(printf '%s' "$old" | jq -r '.id')
+        i=$((i + 1))
+        [ -f "$VPN_CONFIGS_DIR/$id.json" ] && continue
+        name=$(printf '%s' "$old" | jq -r '.name'); srv=$(printf '%s' "$old" | jq -r '.server'); port=$(printf '%s' "$old" | jq -r '.server_port')
+        new=""
+        for f in "$VPN_CONFIGS_DIR"/*.json; do
+            [ -f "$f" ] || continue
+            jq -e --arg s "$sub" --arg n "$name" --arg a "$srv" --arg p "$port" \
+                '.subscription_id == $s and .name == $n and .server == $a and (.server_port | tostring) == $p' "$f" >/dev/null 2>&1 \
+                && { new=$(basename "$f" .json); break; }
+        done
+        if [ -z "$new" ]; then
+            for f in "$VPN_CONFIGS_DIR"/*.json; do
+                [ -f "$f" ] || continue
+                jq -e --arg s "$sub" --arg n "$name" '.subscription_id == $s and .name == $n' "$f" >/dev/null 2>&1 \
+                    && { new=$(basename "$f" .json); break; }
+            done
+        fi
+        [ -n "$new" ] || continue
+        state=$(printf '%s' "$state" | jq -c --arg o "$id" --arg n "$new" \
+            '.members |= map(if . == $o then $n else . end) | (if .primary == $o then .primary = $n else . end)')
+        log_action "MULTI" "Server $id came back as $new after the refresh, kept in the group"
+        changed=1
+    done
+    [ $changed -eq 1 ] && multi_save "$state"
+    return 0
+}
+
 # After servers came or went (subscription refresh, a deleted config or subscription):
 # rebuild the group only if the set sing-box runs is no longer the ticked set
 multi_resync() {

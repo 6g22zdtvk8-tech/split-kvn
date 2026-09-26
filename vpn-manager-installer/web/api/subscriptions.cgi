@@ -1090,26 +1090,60 @@ case "$REQUEST_METHOD" in
                         # servers, or jq trouble) falls back to the old delete-everything path.
                         SKIP_REWRITE=""
                         ACTIVE_GONE=""
+                        MULTI_BEFORE=$(multi_members_of_subscription "$ACTION")
                         CURRENT_SERVERS=$(get_subscription_servers "$ACTION")
                         [ -n "$CURRENT_SERVERS" ] || CURRENT_SERVERS="[]"
                         PLAN=$(jq -c -n --argjson cur "$CURRENT_SERVERS" --argjson new "$SERVERS_JSON" '
                             def sorted: walk(if type == "object" then to_entries | sort_by(.key) | from_entries else . end);
                             def norm: del(.id, .subscription_id, .created_at, .updated_at) | sorted | tojson;
-                            ($cur | map({id: .id, n: norm})) as $c
-                            | ($new | map({s: ., n: norm})) as $n
+                            # What makes it the same server. Some providers (FOLK, 26.09) hand out
+                            # a different REALITY sni on every fetch; that must update the server,
+                            # not replace it under a new id — a new id drops it out of the group.
+                            def ident: [.name, .protocol, .server, .server_port, (.uuid // .password // "")] | tojson;
+                            ($cur | map({id: .id, n: norm, i: ident})) as $c
+                            | ($new | map({s: ., n: norm, i: ident})) as $n
                             | ($c | map(.n)) as $ck
                             | ($n | map(.n)) as $nk
                             | if ($ck | unique | length) != ($ck | length) or ($nk | unique | length) != ($nk | length)
                               then {mode: "full"}
-                              else {mode: "delta",
-                                    keep:   [$c[] | select(.n as $k | $nk | index($k)) | .id],
-                                    delete: [$c[] | select(.n as $k | ($nk | index($k)) == null) | .id],
-                                    create: [$n[] | select(.n as $k | ($ck | index($k)) == null) | .s]}
+                              else
+                                [$c[] | select(.n as $k | ($nk | index($k)) == null)] as $cr
+                                | [$n[] | select(.n as $k | ($ck | index($k)) == null)] as $nr
+                                | ($cr | map(.i)) as $ci
+                                | ($nr | map(.i)) as $ni
+                                # only when the identity is unambiguous on both sides
+                                | (if ($ci | unique | length) == ($ci | length) and ($ni | unique | length) == ($ni | length)
+                                   then [$cr[] | .i as $k | select($ni | index($k)) | {id: .id, s: ($nr[$ni | index($k)].s)}]
+                                   else [] end) as $upd
+                                | ($upd | map(.id)) as $uids
+                                | ($upd | map(.s | ident)) as $uis
+                                | {mode: "delta",
+                                   keep:   [$c[] | select(.n as $k | $nk | index($k)) | .id],
+                                   update: $upd,
+                                   delete: [$cr[] | select(.id as $x | ($uids | index($x)) == null) | .id],
+                                   create: [$nr[] | select(.i as $k | ($uis | index($k)) == null) | .s]}
                               end' 2>/dev/null)
                         if [ "$(printf '%s' "$PLAN" | jq -r '.mode // empty' 2>/dev/null)" = "delta" ]; then
                             KEEP_COUNT=$(printf '%s' "$PLAN" | jq -r '.keep | length' 2>/dev/null)
                             CREATE_JSON=$(printf '%s' "$PLAN" | jq -c '.create' 2>/dev/null)
                             CREATE_COUNT=$(json_len "$CREATE_JSON")
+                            # Same server, changed details: rewrite the file under its old id.
+                            # sing-box keeps the old details until the next rebuild — no restart
+                            # every hour for a disguise that rotates.
+                            UPD_COUNT=0
+                            UPD_NOW=$(date '+%Y-%m-%dT%H:%M:%S')
+                            UPD_ALL=$(printf '%s' "$PLAN" | jq -c '.update // []' 2>/dev/null)
+                            UPD_N=$(json_len "$UPD_ALL")
+                            while [ "$UPD_COUNT" -lt "$UPD_N" ]; do
+                                UPD_ID=$(printf '%s' "$UPD_ALL" | jq -r ".[$UPD_COUNT].id")
+                                UPD_FILE="$VPN_CONFIGS_DIR/${UPD_ID}.json"
+                                if [ -f "$UPD_FILE" ]; then
+                                    UPD_JSON=$(jq -c --argjson s "$(printf '%s' "$UPD_ALL" | jq -c ".[$UPD_COUNT].s")" --arg now "$UPD_NOW" \
+                                        '$s + {id: .id, subscription_id: .subscription_id, created_at: .created_at, updated_at: $now}' "$UPD_FILE" 2>/dev/null)
+                                    [ -n "$UPD_JSON" ] && printf '%s\n' "$UPD_JSON" > "$UPD_FILE.tmp" && mv "$UPD_FILE.tmp" "$UPD_FILE"
+                                fi
+                                UPD_COUNT=$((UPD_COUNT + 1))
+                            done
                             DEL_COUNT=0
                             for DEL_ID in $(printf '%s' "$PLAN" | jq -r '.delete[]?' 2>/dev/null); do
                                 rm -f "$VPN_CONFIGS_DIR/${DEL_ID}.json"
@@ -1120,7 +1154,7 @@ case "$REQUEST_METHOD" in
                                 SERVER_IDS=$(save_subscription_servers "$ACTION" "$CREATE_JSON")
                             fi
                             SKIP_REWRITE="yes"
-                            log_action "SUBSCRIPTION_DELTA" "ID: $ACTION, kept: $KEEP_COUNT, removed: $DEL_COUNT, added: $CREATE_COUNT"
+                            log_action "SUBSCRIPTION_DELTA" "ID: $ACTION, kept: $KEEP_COUNT, updated: $UPD_COUNT, removed: $DEL_COUNT, added: $CREATE_COUNT"
                             # The active server only moves if its own file was one of the removed
                             [ "$ACTIVE_GONE" = "yes" ] || NEED_MIGRATION=""
                         fi
@@ -1165,6 +1199,7 @@ case "$REQUEST_METHOD" in
                         fi
                         
                         log_action "SUBSCRIPTION_REFRESHED" "ID: $ACTION, Servers: $NEW_COUNT, Migrated: $MIGRATED_TO"
+                        multi_follow_members "$ACTION" "$MULTI_BEFORE"
                         multi_resync >/dev/null 2>&1
                         
                         # Form response with migration info
