@@ -2998,6 +2998,8 @@ a.link:hover {
 
 .logs-toolbar {
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.75rem;
@@ -3013,7 +3015,19 @@ a.link:hover {
 
 .logs-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+/* Phone: the five log buttons wrap instead of pushing the window sideways (26.09) */
+#logs-modal .modal-body {
+    overflow-x: hidden;
+}
+
+#logs-modal .logs-tabs,
+#logs-modal .logs-content {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .logs-content {
