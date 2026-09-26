@@ -541,7 +541,7 @@
             'settings.updateSource': 'Update source',
             'settings.updateSourceHint': 'Address of the published release manifest. Empty means updates are switched off entirely.',
             'settings.updateHeld': 'This release is waiting to be cleared for rollout. "Update now" installs it anyway.',
-            'settings.updateRunning': 'Updating — this takes a few minutes.',
+            'settings.updateRunning': 'Updating, usually under a minute. The panel may reload briefly.',
             'settings.updateNone': 'No newer release published.',
             'settings.updateNoSource': 'Update source is not set.',
             'settings.confirmUpdateNow': 'Install the available release now? A backup is taken first and rolled back if it fails.',
@@ -1661,7 +1661,7 @@
             'settings.updateSource': 'Источник обновлений',
             'settings.updateSourceHint': 'Адрес опубликованного описания выпусков. Пусто — обновления выключены совсем.',
             'settings.updateHeld': 'Этот выпуск ждёт разрешения на раскатку. Кнопка «Обновить сейчас» поставит его всё равно.',
-            'settings.updateRunning': 'Идёт обновление, это занимает несколько минут.',
+            'settings.updateRunning': 'Идёт обновление, обычно меньше минуты. Панель может ненадолго перезагрузиться.',
             'settings.updateNone': 'Новых выпусков нет.',
             'settings.updateNoSource': 'Источник обновлений не задан.',
             'settings.confirmUpdateNow': 'Поставить доступный выпуск сейчас? Сначала снимается резервная копия, при сбое откат.',
@@ -5733,14 +5733,15 @@
 
         if (d.running) {
             setUpdateLine(statusEl, t('settings.updateRunning'), 'text-warning');
-            if (btnApply) btnApply.disabled = true;
+            if (btnApply) { btnApply.disabled = true; btnApply.hidden = false; }
             if (btnCheck) btnCheck.disabled = true;
             startUpdatePolling();
             return;
         }
 
         stopUpdatePolling();
-        if (btnApply) btnApply.disabled = !newer;
+        // Nothing newer to install: no button that looks pressable but does nothing
+        if (btnApply) { btnApply.disabled = !newer; btnApply.hidden = !newer; }
         if (btnCheck) btnCheck.disabled = false;
 
         const failKey = UPDATE_FAIL_TEXT[d.last_result];
@@ -5761,7 +5762,7 @@
 
     function startUpdatePolling() {
         if (updatePollTimer) return;
-        updatePollTimer = setInterval(loadUpdateSettings, 10000);
+        updatePollTimer = setInterval(loadUpdateSettings, 3000);
     }
 
     function stopUpdatePolling() {
@@ -5799,6 +5800,12 @@
 
     async function applyUpdateNow() {
         if (!confirm(t('settings.confirmUpdateNow'))) return;
+        // Show the update as running right away, not when the router answers
+        const btnApply = $('#btn-update-apply');
+        const btnCheck = $('#btn-update-check');
+        if (btnApply) btnApply.disabled = true;
+        if (btnCheck) btnCheck.disabled = true;
+        setUpdateLine($('#update-status'), t('settings.updateRunning'), 'text-warning');
         try {
             const response = await api('/update.cgi/apply', { method: 'POST' });
             if (response.success) {
@@ -5809,6 +5816,7 @@
         } catch (error) {
             setUpdateLine($('#update-status'), error.message || t('errors.unknown'), 'text-error');
             showToast(error.message || t('errors.unknown'), 'error');
+            await loadUpdateSettings();
         }
     }
 

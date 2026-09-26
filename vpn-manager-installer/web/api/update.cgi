@@ -123,7 +123,9 @@ do_apply_now() {
     # --force: the owner pressed the button, so a release still on hold is
     # installed too. That is the whole point of the button.
     mkdir -p "$(dirname "$RUN_FLAG")"
-    ( "$UPDATE_SCRIPT" apply --force >/dev/null 2>&1; rm -f "$RUN_FLAG" ) &
+    # Fully detached: while the background job holds the CGI's stdout, lighttpd
+    # waits for it and the button got its answer only after the whole update (26.09)
+    ( "$UPDATE_SCRIPT" apply --force; rm -f "$RUN_FLAG" ) >/dev/null 2>&1 </dev/null &
     echo $! > "$RUN_FLAG"
 
     json_success "$(current_state)"

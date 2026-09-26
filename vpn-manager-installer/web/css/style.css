@@ -261,6 +261,22 @@ body {
 }
 
 /* Settings: URL field same style as port fields (constrained width) */
+/* Settings → Updates: buttons apart from the status above and the source field below */
+.update-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.25rem 0 1.25rem;
+}
+
+.update-actions .btn:disabled {
+    opacity: 0.45;
+}
+
+.update-actions [hidden] {
+    display: none;
+}
+
 .form-group-url .input-group-inline {
     max-width: 28rem;
 }

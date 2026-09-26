@@ -1507,6 +1507,40 @@
                 </div>
                 
                 <div class="settings-section">
+                    <h4 data-i18n="settings.updates">Updates</h4>
+                    <div class="auto-update-toggle">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="settings-auto-update">
+                            <span class="checkbox-label-text" data-i18n="settings.autoUpdate">Install updates automatically</span>
+                        </label>
+                    </div>
+                    <div class="info-row">
+                        <span data-i18n="settings.updateInstalled">Installed:</span>
+                        <span id="update-installed">&mdash;</span>
+                    </div>
+                    <div class="info-row">
+                        <span data-i18n="settings.updateAvailable">Available:</span>
+                        <span id="update-available">&mdash;</span>
+                    </div>
+                    <p class="form-hint" id="update-notes"></p>
+                    <p class="form-hint" id="update-status"></p>
+                    <div class="update-actions">
+                        <button type="button" id="btn-update-check" class="btn btn-secondary btn-sm" data-i18n="settings.updateCheck">Check</button>
+                        <button type="button" id="btn-update-apply" class="btn btn-primary btn-sm" data-i18n="settings.updateNow">Update now</button>
+                    </div>
+                    <div class="form-group form-group-url">
+                        <label for="settings-update-source" data-i18n="settings.updateSource">Update source</label>
+                        <div class="input-group input-group-inline">
+                            <input type="url" id="settings-update-source"
+                                   placeholder="https://example.com/vpn-manager/latest.json"
+                                   class="input-sm input-url">
+                            <button type="button" id="btn-save-update-source" class="btn btn-primary btn-sm" data-i18n="settings.save">Save</button>
+                        </div>
+                        <small class="form-hint" data-i18n="settings.updateSourceHint">Address of the published release manifest. Empty means updates are switched off entirely.</small>
+                    </div>
+                </div>
+
+                <div class="settings-section">
                     <h4 data-i18n="settings.remoteLists">Remote Lists Source</h4>
                     <div class="form-group form-group-url">
                         <label for="settings-lists-source-url" data-i18n="settings.listsSourceUrl">Base URL for remote lists</label>
@@ -1599,40 +1633,6 @@
                     <p class="form-hint" data-i18n="settings.logHint">The log is kept in the router's RAM to spare the USB drive, and starts empty after a reboot. Warnings and errors are copied to the drive once a day.</p>
                     <p class="form-hint" id="verbose-log-status"></p>
                     <button type="button" id="btn-verbose-log" class="btn btn-secondary btn-sm">Detailed log for 1 hour</button>
-                </div>
-
-                <div class="settings-section">
-                    <h4 data-i18n="settings.updates">Updates</h4>
-                    <div class="auto-update-toggle">
-                        <label class="checkbox-inline">
-                            <input type="checkbox" id="settings-auto-update">
-                            <span class="checkbox-label-text" data-i18n="settings.autoUpdate">Install updates automatically</span>
-                        </label>
-                    </div>
-                    <div class="info-row">
-                        <span data-i18n="settings.updateInstalled">Installed:</span>
-                        <span id="update-installed">&mdash;</span>
-                    </div>
-                    <div class="info-row">
-                        <span data-i18n="settings.updateAvailable">Available:</span>
-                        <span id="update-available">&mdash;</span>
-                    </div>
-                    <p class="form-hint" id="update-notes"></p>
-                    <p class="form-hint" id="update-status"></p>
-                    <div class="input-group">
-                        <button type="button" id="btn-update-check" class="btn btn-secondary btn-sm" data-i18n="settings.updateCheck">Check</button>
-                        <button type="button" id="btn-update-apply" class="btn btn-primary btn-sm" data-i18n="settings.updateNow">Update now</button>
-                    </div>
-                    <div class="form-group form-group-url">
-                        <label for="settings-update-source" data-i18n="settings.updateSource">Update source</label>
-                        <div class="input-group input-group-inline">
-                            <input type="url" id="settings-update-source"
-                                   placeholder="https://example.com/vpn-manager/latest.json"
-                                   class="input-sm input-url">
-                            <button type="button" id="btn-save-update-source" class="btn btn-primary btn-sm" data-i18n="settings.save">Save</button>
-                        </div>
-                        <small class="form-hint" data-i18n="settings.updateSourceHint">Address of the published release manifest. Empty means updates are switched off entirely.</small>
-                    </div>
                 </div>
 
                 <div class="settings-section">
