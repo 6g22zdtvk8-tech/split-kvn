@@ -2661,6 +2661,7 @@
     }
 
     function updateStatusDisplay(data) {
+        state.lastStatusData = data;
         const vpn = data.vpn || {};
         const isRunning = vpn.singbox_status === 'running';
         state.vpnRunning = isRunning;
@@ -2721,11 +2722,15 @@
             uptimeText = `${hours}${t('time.h')} ${minutes}${t('time.min')}`;
         }
         
+        // The server's name, not its internal id (the id stays in the tooltip)
+        const activeCfg = vpn.active_config ? state.configs.find(c => String(c.id) === String(vpn.active_config)) : null;
+        const activeName = activeCfg && activeCfg.name ? activeCfg.name : (vpn.active_config || '—');
+
         elements.statusDetails.innerHTML = `
             <div class="status-grid">
                 <div class="status-item">
                     <div class="status-item-label">${t('vpn.activeConfig')}</div>
-                    <div class="status-item-value" title="${vpn.active_config || ''}">${vpn.active_config || '—'}</div>
+                    <div class="status-item-value" title="${escapeHtml(vpn.active_config || '')}">${escapeHtml(activeName)}</div>
                 </div>
                 <div class="status-item">
                     <div class="status-item-label">${t('vpn.uptime')}</div>
@@ -2769,6 +2774,8 @@
                 state.configs = data.data.configs || [];
                 state.activeConfig = data.data.active;
                 renderConfigs();
+                // The status card may have been drawn before the names were known
+                if (state.lastStatusData) updateStatusDisplay(state.lastStatusData);
             }
         } catch (error) {
             elements.configList.innerHTML = `
@@ -3855,6 +3862,9 @@
         try {
             multiApplyState(await multiPost('/primary', { id }));
             showToast(t('multi.primarySet'), 'success');
+            // The status card and the server list show the active server too — refresh them
+            // now instead of after a page reload (26.09)
+            await loadStatus();
         } catch (e) {
             showToast(multiErrorText(e), 'error');
         } finally {
