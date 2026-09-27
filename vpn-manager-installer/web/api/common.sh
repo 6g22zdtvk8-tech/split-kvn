@@ -138,8 +138,12 @@ get_merged_content() {
 }
 
 # Create required directories
-mkdir -p "$SESSION_DIR" 2>/dev/null
-chmod 700 "$SESSION_DIR" 2>/dev/null
+# Only when missing: chmod on every request rewrites the directory's inode (ctime) —
+# with the panel polling every 5 s that was ~5 MB/hour of flash writes (27.09)
+if [ ! -d "$SESSION_DIR" ]; then
+    mkdir -p "$SESSION_DIR" 2>/dev/null
+    chmod 700 "$SESSION_DIR" 2>/dev/null
+fi
 
 # Sessions used to live in RAM (/tmp/vpn-manager-sessions) and died with every reboot.
 # Carry the live ones over once, so the update itself logs nobody out.

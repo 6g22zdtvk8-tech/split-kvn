@@ -1576,6 +1576,15 @@ EOF
         log_ok "Configured CGI for shell scripts"
     fi
     
+    # Temporary files of the web server in RAM, not on the USB drive: lighttpd buffers
+    # CGI answers there and deletes them at once, so nothing shows on the drive — yet an
+    # open panel polling every few seconds cost ~5 MB/hour of flash writes (27.09).
+    # The base config already sets upload-dirs, a second assignment would be an error.
+    if [ -f /opt/etc/lighttpd/lighttpd.conf ] && grep -q 'server.upload-dirs *= *( *"/opt/tmp" *)' /opt/etc/lighttpd/lighttpd.conf; then
+        sed -i 's|server.upload-dirs *= *( *"/opt/tmp" *)|server.upload-dirs          = ( "/tmp" )|' /opt/etc/lighttpd/lighttpd.conf
+        log_ok "lighttpd temporary files moved to RAM (/tmp)"
+    fi
+
     # Delete old file if remains from previous installation
     rm -f /opt/etc/lighttpd/conf.d/35-cgi-shell.conf
     
