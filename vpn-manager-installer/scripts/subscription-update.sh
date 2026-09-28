@@ -157,7 +157,7 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
     TRIMMED=$(echo "$CONTENT" | tr -d '[:space:]')
     if echo "$TRIMMED" | grep -qE '^[A-Za-z0-9+/=]+$'; then
         DECODED=$(echo "$TRIMMED" | base64 -d 2>/dev/null)
-        if [ -n "$DECODED" ] && echo "$DECODED" | grep -qE '^(ss|vless|vmess|trojan|wireguard)://'; then
+        if [ -n "$DECODED" ] && echo "$DECODED" | grep -qE '^(ss|vless|vmess|trojan|hysteria2|hy2|wireguard)://'; then
             CONTENT="$DECODED"
         fi
     fi
@@ -173,7 +173,7 @@ jq -c '.subscriptions[] | select(.auto_update == true)' "$SUBSCRIPTIONS_FILE" 2>
         NEW_COUNT=$(echo "$CONTENT" | grep -cE '^\s*-\s*(name|type):' || echo 0)
     else
         # Count lines with valid protocol URIs
-        NEW_COUNT=$(echo "$CONTENT" | grep -cE '^(ss|vless|vmess|trojan|wireguard)://' || echo 0)
+        NEW_COUNT=$(echo "$CONTENT" | grep -cE '^(ss|vless|vmess|trojan|hysteria2|hy2|wireguard)://' || echo 0)
     fi
 
     case "$NEW_COUNT" in ''|*[!0-9]*) NEW_COUNT=0 ;; esac

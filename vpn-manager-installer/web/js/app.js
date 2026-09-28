@@ -374,7 +374,7 @@
             'configModal.port': 'Port',
             'configModal.protocol': 'Protocol',
             'configModal.importLink': 'Or paste a link',
-            'configModal.importPlaceholder': 'ss://, vless://, vmess://, trojan://, wg://',
+            'configModal.importPlaceholder': 'ss://, vless://, vmess://, trojan://, hysteria2://, wg://',
             'configModal.required': '*',
             
             // Config modal - IPv6
@@ -402,6 +402,9 @@
             
             // Config modal - Trojan
             'configModal.trojanPasswordPlaceholder': 'Trojan password',
+            'configModal.hy2PasswordPlaceholder': 'Hysteria2 password',
+            'configModal.hy2ObfsPassword': 'Obfuscation password (salamander)',
+            'configModal.hy2ObfsPlaceholder': 'Leave empty if not used',
             'configModal.skipCertVerify': 'Skip certificate verification',
             
             // Config modal - WireGuard
@@ -644,9 +647,9 @@
             'import.subscription': 'Subscription',
             'import.tabLink': 'URL / subscription',
             'import.linkLabel': 'Server link or subscription link',
-            'import.linkHint': 'A server link (Shadowsocks, VLESS, VMess, Trojan) adds one server; an https:// link adds a subscription.',
+            'import.linkHint': 'A server link (Shadowsocks, VLESS, VMess, Trojan, Hysteria2) adds one server; an https:// link adds a subscription.',
             'import.configUrl': 'Configuration URL',
-            'import.supportedProtocols': 'Supported: Shadowsocks, VLESS, VMess, Trojan',
+            'import.supportedProtocols': 'Supported: Shadowsocks, VLESS, VMess, Trojan, Hysteria2',
             'import.subscriptionUrl': 'Subscription URL',
             'import.subscriptionName': 'Subscription Name',
             'import.subscriptionNameHint': 'Optional. If not specified, it will be detected automatically.',
@@ -1411,7 +1414,7 @@
             'configModal.port': 'Порт',
             'configModal.protocol': 'Протокол',
             'configModal.importLink': 'Или вставьте ссылку',
-            'configModal.importPlaceholder': 'ss://, vless://, vmess://, trojan://, wg://',
+            'configModal.importPlaceholder': 'ss://, vless://, vmess://, trojan://, hysteria2://, wg://',
             'configModal.required': '*',
             
             // Config modal - IPv6
@@ -1439,6 +1442,9 @@
             
             // Config modal - Trojan
             'configModal.trojanPasswordPlaceholder': 'Пароль Trojan',
+            'configModal.hy2PasswordPlaceholder': 'Пароль Hysteria2',
+            'configModal.hy2ObfsPassword': 'Пароль маскировки (salamander)',
+            'configModal.hy2ObfsPlaceholder': 'Пусто, если не используется',
             'configModal.skipCertVerify': 'Пропустить проверку сертификата',
             
             // Config modal - WireGuard
@@ -1778,9 +1784,9 @@
             'import.subscription': 'Подписка',
             'import.tabLink': 'URL / подписка',
             'import.linkLabel': 'Ссылка на сервер или подписку',
-            'import.linkHint': 'Ссылка на сервер (Shadowsocks, VLESS, VMess, Trojan) добавит один сервер, ссылка https:// — подписку.',
+            'import.linkHint': 'Ссылка на сервер (Shadowsocks, VLESS, VMess, Trojan, Hysteria2) добавит один сервер, ссылка https:// — подписку.',
             'import.configUrl': 'URL конфигурации',
-            'import.supportedProtocols': 'Поддерживаются: Shadowsocks, VLESS, VMess, Trojan',
+            'import.supportedProtocols': 'Поддерживаются: Shadowsocks, VLESS, VMess, Trojan, Hysteria2',
             'import.subscriptionUrl': 'URL подписки',
             'import.subscriptionName': 'Название подписки',
             'import.subscriptionNameHint': 'Необязательно. Если не указано, будет определено автоматически.',
@@ -2187,7 +2193,7 @@
         },
         hysteria2: {
             name: 'Hysteria2',
-            fields: ['hy2_password', 'hy2_sni', 'hy2_up_mbps', 'hy2_down_mbps', 'hy2_skip_verify', 'hy2_obfs_password']
+            fields: ['hy2_password', 'hy2_sni', 'hy2_skip_verify', 'hy2_obfs_password']
         }
     };
 
@@ -3278,8 +3284,6 @@
             } else if (protocol === 'hysteria2') {
                 $('#hy2-password').value = config.password || '';
                 $('#hy2-sni').value = config.sni || '';
-                $('#hy2-up-mbps').value = config.up_mbps || 100;
-                $('#hy2-down-mbps').value = config.down_mbps || 100;
                 $('#hy2-skip-verify').checked = config.skip_verify || false;
                 $('#hy2-obfs-password').value = config.obfs_password || '';
             }
@@ -3370,10 +3374,9 @@
         } else if (protocol === 'hysteria2') {
             data.password = formData.get('hy2_password');
             data.sni = formData.get('hy2_sni') || '';
-            data.up_mbps = parseInt(formData.get('hy2_up_mbps')) || 100;
-            data.down_mbps = parseInt(formData.get('hy2_down_mbps')) || 100;
             data.skip_verify = formData.get('hy2_skip_verify') === 'on';
             data.obfs_password = formData.get('hy2_obfs_password') || '';
+            data.obfs = data.obfs_password ? 'salamander' : '';
         }
         
         // Show loader on button

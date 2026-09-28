@@ -423,14 +423,21 @@ case "$REQUEST_METHOD" in
                 hysteria2)
                     PASSWORD=$(json_get_value "$POST_DATA" "password")
                     SNI=$(json_get_value "$POST_DATA" "sni")
-                    UP_MBPS=$(json_get_number "$POST_DATA" "up_mbps")
-                    DOWN_MBPS=$(json_get_number "$POST_DATA" "down_mbps")
+                    SKIP_VERIFY=$(json_get_bool "$POST_DATA" "skip_verify")
+                    OBFS=$(json_get_value "$POST_DATA" "obfs")
+                    OBFS_PASSWORD=$(json_get_value "$POST_DATA" "obfs_password")
+                    ALPN=$(json_get_value "$POST_DATA" "alpn")
                     [ -z "$PASSWORD" ] && { json_error "Password is required for Hysteria2" 400; exit 0; }
                     CONFIG_JSON="$CONFIG_JSON,
   \"password\": \"$PASSWORD\",
-  \"sni\": \"$SNI\",
-  \"up_mbps\": ${UP_MBPS:-100},
-  \"down_mbps\": ${DOWN_MBPS:-100}"
+  \"sni\": \"$SNI\""
+                    [ "$SKIP_VERIFY" = "true" ] && CONFIG_JSON="$CONFIG_JSON,
+  \"skip_verify\": true"
+                    [ -n "$OBFS" ] && CONFIG_JSON="$CONFIG_JSON,
+  \"obfs\": \"$OBFS\",
+  \"obfs_password\": \"$OBFS_PASSWORD\""
+                    [ -n "$ALPN" ] && CONFIG_JSON="$CONFIG_JSON,
+  \"alpn\": \"$ALPN\""
                     ;;
             esac
             

@@ -862,6 +862,16 @@ generate_outbound_json() {
             
             echo "{\"type\":\"trojan\",\"tag\":\"$tag\",\"server\":\"$server\",\"server_port\":$server_port,\"password\":\"$password\"$tls_json$transport_json}"
             ;;
+        hysteria2)
+            # QUIC over UDP; TLS is always on, ALPN defaults to h3 in sing-box
+            jq -c --arg tag "$tag" '
+                {type: "hysteria2", tag: $tag, server: .server, server_port: (.server_port | tonumber), password: .password,
+                 tls: ({enabled: true}
+                       + (if (.sni // "") != "" then {server_name: .sni} else {} end)
+                       + (if .skip_verify == true then {insecure: true} else {} end)
+                       + (if (.alpn // "") != "" then {alpn: (.alpn | split(","))} else {} end))}
+                + (if (.obfs // "") != "" then {obfs: {type: .obfs, password: (.obfs_password // "")}} else {} end)' "$config_file" 2>/dev/null
+            ;;
         wireguard)
             local private_key=$(json_get_value "$config_data" "private_key")
             local peer_public_key=$(json_get_value "$config_data" "peer_public_key")
@@ -1232,7 +1242,7 @@ apply_singbox_vpn_items() {
 }
 
 # ============================================
-# Parse VPN URL (SS, VLESS, VMess, Trojan)
+# Parse VPN URL (SS, VLESS, VMess, Trojan, Hysteria2)
 # ============================================
 
 # Base64 decoding (URL-safe and regular)
@@ -1436,6 +1446,61 @@ parse_trojan_url() {
     fi
 }
 
+# Parse Hysteria2 URL: hysteria2://auth@server:port/?sni=..&insecure=1&obfs=salamander&obfs-password=..#name
+# (hy2:// is the same). Port hopping (mport) and client-only extras (fm, pinSHA256) are not carried over.
+parse_hysteria2_url() {
+    local url="$1"
+    local data="${url#*://}"
+    local name=""
+
+    if echo "$data" | grep -q '#'; then
+        name=$(url_decode "$(echo "$data" | sed 's/.*#//')")
+        data=$(echo "$data" | sed 's/#.*//')
+    fi
+
+    local password=""
+    if echo "$data" | grep -q '@'; then
+        password=$(url_decode "$(echo "$data" | sed 's/@[^@]*$//')")
+        data=$(echo "$data" | sed 's/.*@//')
+    fi
+    local hostport=$(echo "$data" | sed 's/[/?].*//')
+    local params=$(echo "$data" | grep '?' | sed 's/[^?]*?//')
+
+    local server port
+    case "$hostport" in
+        \[*) server=$(echo "$hostport" | sed 's/^\[\([^]]*\)\].*/\1/'); port=$(echo "$hostport" | sed -n 's/^\[[^]]*\]:\([0-9]*\).*/\1/p') ;;
+        *) server=$(echo "$hostport" | sed 's/:.*//'); port=$(echo "$hostport" | sed -n 's/^[^:]*:\([0-9]*\).*/\1/p') ;;
+    esac
+    [ -z "$port" ] && port=443
+
+    local sni="" insecure="" obfs="" obfs_password="" alpn=""
+    for param in $(echo "$params" | tr '&' ' '); do
+        local key=$(echo "$param" | cut -d= -f1)
+        local value=$(url_decode "$(echo "$param" | cut -d= -f2-)")
+        case "$key" in
+            sni|peer) sni="$value" ;;
+            insecure|allowInsecure) insecure="$value" ;;
+            obfs) obfs="$value" ;;
+            obfs-password|obfs_password) obfs_password="$value" ;;
+            alpn) alpn="$value" ;;
+            auth) [ -z "$password" ] && password="$value" ;;
+        esac
+    done
+    case "$insecure" in 1|true) insecure=true ;; *) insecure=false ;; esac
+    [ "$obfs" = "none" ] && obfs=""
+
+    [ -z "$name" ] && name="$server:$port"
+
+    if [ -n "$server" ] && [ -n "$password" ]; then
+        jq -c -n --arg name "$name" --arg server "$server" --argjson port "$port" --arg password "$password" \
+            --arg sni "$sni" --argjson insecure "$insecure" --arg obfs "$obfs" --arg obfs_password "$obfs_password" --arg alpn "$alpn" \
+            '{protocol: "hysteria2", name: $name, server: $server, server_port: $port, password: $password, sni: $sni}
+             + (if $insecure then {skip_verify: true} else {} end)
+             + (if $obfs != "" then {obfs: $obfs, obfs_password: $obfs_password} else {} end)
+             + (if $alpn != "" then {alpn: $alpn} else {} end)'
+    fi
+}
+
 # Parse WireGuard/AmneziaWG .conf file
 parse_wireguard_conf() {
     local conf_data="$1"
@@ -1537,6 +1602,9 @@ parse_vpn_url() {
             ;;
         trojan://*)
             parse_trojan_url "$url"
+            ;;
+        hysteria2://*|hy2://*)
+            parse_hysteria2_url "$url"
             ;;
         vmess://*)
             # VMess is usually base64 encoded JSON
@@ -1656,6 +1724,18 @@ config_to_link() {
             _q_add flow "$(cfg_get "$f" flow)"
             _q_add alpn "$(cfg_get "$f" alpn)"
             printf '%s://%s@%s:%s?%s#%s\n' "$proto" "$cred" "$server" "$port" "$_q" "$label"
+            ;;
+        hysteria2)
+            local _q="" cred
+            cred=$(cfg_get "$f" password)
+            [ -n "$cred" ] || return 1
+            _q_add sni "$(cfg_get "$f" sni)"
+            [ "$(cfg_get "$f" skip_verify)" = "true" ] && _q_add insecure 1
+            _q_add obfs "$(cfg_get "$f" obfs)"
+            _q_add obfs-password "$(uri_escape "$(cfg_get "$f" obfs_password)")"
+            _q_add alpn "$(cfg_get "$f" alpn)"
+            case "$server" in *:*) server="[$server]" ;; esac
+            printf 'hysteria2://%s@%s:%s/%s#%s\n' "$(uri_escape "$cred" | sed 's|@|%40|g')" "$server" "$port" "${_q:+?$_q}" "$label"
             ;;
         vmess)
             # VMess carries its parameters as base64-encoded JSON, not a query string.

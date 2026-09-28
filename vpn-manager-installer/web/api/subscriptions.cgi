@@ -48,7 +48,7 @@ write_subscriptions_json() {
 }
 
 # List of supported protocols
-SUPPORTED_PROTOCOLS="shadowsocks vless vmess trojan wireguard"
+SUPPORTED_PROTOCOLS="shadowsocks vless vmess trojan hysteria2 wireguard"
 
 # Convert ssconf:// to https://
 normalize_subscription_url() {
@@ -394,7 +394,7 @@ decode_subscription_content() {
     if echo "$trimmed" | grep -qE '^[A-Za-z0-9+/=]+$'; then
         # Try to decode as base64
         local decoded=$(base64_decode "$trimmed")
-        if [ -n "$decoded" ] && echo "$decoded" | grep -qE '^(ss|vless|vmess|trojan|wireguard)://'; then
+        if [ -n "$decoded" ] && echo "$decoded" | grep -qE '^(ss|vless|vmess|trojan|hysteria2|hy2|wireguard)://'; then
             echo "$decoded"
             return
         fi
@@ -570,6 +570,7 @@ parse_subscription_servers() {
                 vless://*) proto="vless" ;;
                 vmess://*) proto="vmess" ;;
                 trojan://*) proto="trojan" ;;
+                hysteria2://*|hy2://*) proto="hysteria2" ;;
                 wireguard://*) proto="wireguard" ;;
                 *)
                     # Unsupported protocol
@@ -699,7 +700,7 @@ case "$REQUEST_METHOD" in
             
             supported-protocols)
                 # List of supported protocols
-                json_success "{\"protocols\":[\"Shadowsocks\",\"VLESS\",\"VMess\",\"Trojan\",\"WireGuard\"]}"
+                json_success "{\"protocols\":[\"Shadowsocks\",\"VLESS\",\"VMess\",\"Trojan\",\"Hysteria2\",\"WireGuard\"]}"
                 ;;
             
             *)
