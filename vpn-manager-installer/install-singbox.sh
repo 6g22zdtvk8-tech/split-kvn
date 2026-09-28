@@ -1030,8 +1030,9 @@ setup_logrotate() {
     # router that does not want updates one no-op a day.
     grep -v "update-check" "$crontab_file" > "${crontab_file}.tmp" 2>/dev/null || true
     mv "${crontab_file}.tmp" "$crontab_file"
-    echo "23 5 * * * $VPN_MANAGER_HOME/scripts/update-check.sh cron >/dev/null 2>&1" >> "$crontab_file"
-    log_ok "Self-update check configured (nightly, 05:23)"
+    # 05:12: after the hourly subscription refresh at :00, before the failover check at :30
+    echo "12 5 * * * $VPN_MANAGER_HOME/scripts/update-check.sh cron >/dev/null 2>&1" >> "$crontab_file"
+    log_ok "Self-update check configured (nightly, 05:12)"
 
     # IMPORTANT: cron requires permissions 600 on crontab, else BAD FILE MODE
     chmod 600 "$crontab_file"
