@@ -1376,7 +1376,11 @@ parse_vless_url() {
             spx) spx="$value" ;;
             encryption) encryption="$value" ;;
             path) transport_path="$value" ;;
+            # gRPC links carry the service name as serviceName (path stays empty); without
+            # it sing-box knocks on the wrong gRPC service and the server drops the stream
+            serviceName) [ -z "$transport_path" ] && transport_path="$value" ;;
             host) transport_host="$value" ;;
+            authority) [ -z "$transport_host" ] && transport_host="$value" ;;
             mode) transport_mode="$value" ;;
             alpn) alpn="$value" ;;
         esac
