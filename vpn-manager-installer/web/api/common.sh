@@ -780,8 +780,17 @@ generate_outbound_json() {
                 tls_json=",\"tls\":{\"enabled\":true,\"server_name\":\"$sni\"$alpn_json,\"utls\":{\"enabled\":true,\"fingerprint\":\"$fp\"}}"
             fi
             
+            # Vision (xtls-rprx-vision) runs only over a plain TCP stream with TLS/REALITY:
+            # over gRPC/WS/xhttp sing-box refuses every connection ("Vision requires either
+            # TLS/Reality or Encryption", "not a valid supported TLS connection: GunConn") —
+            # Xray-style clients drop the flow there, so do we (seen: VLESS+gRPC links that
+            # carry flow=xtls-rprx-vision)
+            case "$transport_type" in ""|tcp|raw) ;; *) flow="" ;; esac
+            # VLESS encryption (Xray "mlkem768x25519plus…"): sing-box-extended takes it as is
+            local encryption=$(json_get_value "$config_data" "encryption")
             local flow_json=""
             [ -n "$flow" ] && flow_json=",\"flow\":\"$flow\""
+            [ -n "$encryption" ] && [ "$encryption" != "none" ] && flow_json="$flow_json,\"encryption\":\"$encryption\""
             
             # Transport (WebSocket, XHTTP, gRPC)
             local transport_json=""
@@ -1391,7 +1400,9 @@ parse_vless_url() {
     [ -n "$alpn" ] && alpn_json=",\"alpn\":\"$alpn\""
     
     if [ -n "$server" ] && [ -n "$port" ] && [ -n "$uuid" ]; then
-        echo "{\"protocol\":\"vless\",\"name\":\"$name\",\"server\":\"$server\",\"server_port\":$port,\"uuid\":\"$uuid\",\"flow\":\"$flow\",\"security\":\"$security\",\"sni\":\"$sni\",\"fingerprint\":\"$fp\",\"public_key\":\"$pbk\",\"short_id\":\"$sid\"$alpn_json$transport_json}"
+        local enc_json=""
+        [ -n "$encryption" ] && [ "$encryption" != "none" ] && enc_json=",\"encryption\":\"$encryption\""
+        echo "{\"protocol\":\"vless\",\"name\":\"$name\",\"server\":\"$server\",\"server_port\":$port,\"uuid\":\"$uuid\"$enc_json,\"flow\":\"$flow\",\"security\":\"$security\",\"sni\":\"$sni\",\"fingerprint\":\"$fp\",\"public_key\":\"$pbk\",\"short_id\":\"$sid\"$alpn_json$transport_json}"
     fi
 }
 
@@ -1722,6 +1733,7 @@ config_to_link() {
             [ -n "$sid" ] || sid=$(cfg_get "$f" short_id)
             _q_add sid "$sid"
             _q_add flow "$(cfg_get "$f" flow)"
+            _q_add encryption "$(cfg_get "$f" encryption)"
             _q_add alpn "$(cfg_get "$f" alpn)"
             printf '%s://%s@%s:%s?%s#%s\n' "$proto" "$cred" "$server" "$port" "$_q" "$label"
             ;;

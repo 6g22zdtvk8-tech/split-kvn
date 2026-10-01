@@ -298,6 +298,7 @@ case "$REQUEST_METHOD" in
                 vless)
                     UUID=$(json_get_value "$POST_DATA" "uuid")
                     FLOW=$(json_get_value "$POST_DATA" "flow")
+                    ENCRYPTION=$(json_get_value "$POST_DATA" "encryption")
                     SECURITY=$(json_get_value "$POST_DATA" "security")
                     SNI=$(json_get_value "$POST_DATA" "sni")
                     FINGERPRINT=$(json_get_value "$POST_DATA" "fingerprint")
@@ -312,6 +313,7 @@ case "$REQUEST_METHOD" in
                     CONFIG_JSON="$CONFIG_JSON,
   \"uuid\": \"$UUID\",
   \"flow\": \"$FLOW\",
+  \"encryption\": \"$ENCRYPTION\",
   \"security\": \"$SECURITY\",
   \"sni\": \"$SNI\",
   \"fingerprint\": \"$FINGERPRINT\",
