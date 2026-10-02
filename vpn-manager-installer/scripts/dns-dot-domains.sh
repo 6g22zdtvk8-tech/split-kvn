@@ -39,6 +39,11 @@ stubby_alive() {
 # Watchdog: bring the stub back if it died, then re-check.
 ensure_stubby() {
     stubby_alive && return 0
+    # Not installed or never configured (the general upstream is plain): set it up
+    if [ ! -x /opt/sbin/stubby ] || [ ! -f /opt/etc/vpn-manager/stubby.yml ]; then
+        /opt/etc/vpn-manager/scripts/dns-upstream-fallback.sh stub >/dev/null 2>&1
+        stubby_alive && return 0
+    fi
     [ -x "$STUBBY_INIT" ] || { log "stub init script missing: $STUBBY_INIT"; return 1; }
     log "stub not responding on 127.0.0.1:$STUBBY_PORT — restarting"
     "$STUBBY_INIT" restart >/dev/null 2>&1

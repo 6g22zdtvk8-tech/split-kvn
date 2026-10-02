@@ -195,6 +195,29 @@ stop_stubby() {
     fi
 }
 
+# The stub is needed whatever the general mode: dns-dot-domains.sh sends the
+# VPN-list domains to it even while the general upstream stays plain, because
+# some providers leave port 53 open and forge the answers for exactly those names
+# (seen 02.10.2026: NXDOMAIN for www.youtube.com from every server, a real answer
+# only now and then). Before 2.15.78 the stub was installed only when port 53 was
+# blocked, so on such a provider the protection never switched on.
+ensure_stub() {
+    test_stubby_local && return 0
+    if [ ! -x /opt/sbin/stubby ]; then
+        # one install attempt a day: opkg rewrites its package lists on the drive
+        local mark=/tmp/vpn-manager/stubby-install-tried
+        if [ -f "$mark" ] && [ $(( $(date +%s) - $(date -r "$mark" +%s 2>/dev/null || echo 0) )) -lt 86400 ]; then
+            return 1
+        fi
+        mkdir -p /tmp/vpn-manager
+        touch "$mark"
+        install_stubby || { log_warn "stubby could not be installed"; return 1; }
+    fi
+    [ -f "$STUBBY_CONF" ] || write_stubby_config
+    start_stubby || { log_warn "stubby does not answer on 127.0.0.1:$STUBBY_PORT"; return 1; }
+    log_ok "DoT stub running for the VPN-list domains"
+}
+
 restart_dnsmasq() {
     [ -x "$DNSMASQ_INIT" ] && "$DNSMASQ_INIT" restart >/dev/null 2>&1 || true
 }
@@ -318,12 +341,13 @@ case "${1:-apply}" in
         apply_dns_upstream "$@"
         ;;
     status)  cmd_status ;;
+    stub)    ensure_dig; ensure_stub ;;
     test)
         test_plain_dns && echo "plain: OK" || echo "plain: FAIL"
         test_dot_dns && echo "dot: OK" || echo "dot: FAIL"
         ;;
     *)
-        echo "Usage: $0 {apply|status|test} [--no-restart] [--quiet]"
+        echo "Usage: $0 {apply|status|test|stub} [--no-restart] [--quiet]"
         exit 1
         ;;
 esac

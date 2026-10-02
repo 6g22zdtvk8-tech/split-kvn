@@ -27,8 +27,8 @@ VPN_MANAGER_HOME="/opt/etc/vpn-manager"
 # the panel password, settings, subscriptions, lists, the sing-box config and the
 # VPN-server credentials. Set by the "update" subcommand, never on a fresh install.
 UPDATE_MODE=0
-# 2.15.77: a diagnostic release — network diagnostics run for 12 h after it is installed
-NET_DIAG_ON_INSTALL_HOURS=12
+# Hours of network diagnostics after an install (scripts/net-diag.sh); 0 = off
+NET_DIAG_ON_INSTALL_HOURS=0
 AUTO_INSTALL_MARKER="/opt/etc/.vpn-manager-installed"
 AUTO_INSTALL_SCRIPT="/opt/etc/init.d/S01autoinstall"
 
@@ -1677,6 +1677,9 @@ start_services() {
     local fallback="$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh"
     if [ -x "$fallback" ]; then
         "$fallback" apply --no-restart || log_warn "DNS upstream fallback apply failed"
+        # VPN-list domains over DoT, so a provider cannot forge their answers
+        "$fallback" stub || log_warn "DoT stub not available — VPN-list domains use the normal upstream"
+        [ -x "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" ] && "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" >/dev/null 2>&1
     fi
     
     # Restart dnsmasq
@@ -1904,6 +1907,13 @@ run_update() {
     if [ -x /opt/etc/init.d/S80lighttpd ]; then
         /opt/etc/init.d/S80lighttpd restart >/dev/null 2>&1 || true
         log_ok "Panel reloaded"
+    fi
+
+    # VPN-list domains over DoT, so a provider cannot forge their answers (2.15.78).
+    # dns-dot-domains.sh restarts dnsmasq only when its config changed.
+    if [ -x "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" ]; then
+        "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" stub || log_warn "DoT stub not available — VPN-list domains use the normal upstream"
+        [ -x "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" ] && "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" >/dev/null 2>&1
     fi
 
     echo ""
