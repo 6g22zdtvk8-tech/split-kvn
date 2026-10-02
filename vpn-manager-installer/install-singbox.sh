@@ -27,6 +27,8 @@ VPN_MANAGER_HOME="/opt/etc/vpn-manager"
 # the panel password, settings, subscriptions, lists, the sing-box config and the
 # VPN-server credentials. Set by the "update" subcommand, never on a fresh install.
 UPDATE_MODE=0
+# 2.15.77: a diagnostic release — network diagnostics run for 12 h after it is installed
+NET_DIAG_ON_INSTALL_HOURS=12
 AUTO_INSTALL_MARKER="/opt/etc/.vpn-manager-installed"
 AUTO_INSTALL_SCRIPT="/opt/etc/init.d/S01autoinstall"
 
@@ -1034,6 +1036,10 @@ setup_logrotate() {
     echo "12 5 * * * $VPN_MANAGER_HOME/scripts/update-check.sh cron >/dev/null 2>&1" >> "$crontab_file"
     log_ok "Self-update check configured (nightly, 05:12)"
 
+    grep -v "net-diag" "$crontab_file" > "${crontab_file}.tmp" 2>/dev/null || true
+    mv "${crontab_file}.tmp" "$crontab_file"
+    echo "* * * * * $VPN_MANAGER_HOME/scripts/net-diag.sh >/dev/null 2>&1" >> "$crontab_file"
+
     # IMPORTANT: cron requires permissions 600 on crontab, else BAD FILE MODE
     chmod 600 "$crontab_file"
     
@@ -1390,6 +1396,16 @@ install_vpn_manager() {
         chmod +x "$VPN_MANAGER_HOME/scripts/update-check.sh"
         sed -i 's/\r$//' "$VPN_MANAGER_HOME/scripts/update-check.sh"
         log_ok "Self-update script installed"
+    fi
+    # Time-limited network diagnostics (DNS queries, connections to DNS servers).
+    # Inert unless net-diag.until holds a moment in the future.
+    if [ -f "$SCRIPT_DIR/scripts/net-diag.sh" ]; then
+        sed 's/\r$//' "$SCRIPT_DIR/scripts/net-diag.sh" > "$VPN_MANAGER_HOME/scripts/net-diag.sh"
+        chmod +x "$VPN_MANAGER_HOME/scripts/net-diag.sh"
+        if [ "${NET_DIAG_ON_INSTALL_HOURS:-0}" -gt 0 ]; then
+            echo $(( $(date +%s) + NET_DIAG_ON_INSTALL_HOURS * 3600 )) > "$VPN_MANAGER_HOME/net-diag.until"
+            log_ok "Network diagnostics switched on for $NET_DIAG_ON_INSTALL_HOURS h"
+        fi
     fi
     if [ -f "$SCRIPT_DIR/scripts/S55dns-dot-stub" ]; then
         sed 's/\r$//' "$SCRIPT_DIR/scripts/S55dns-dot-stub" > /opt/etc/init.d/S55dns-dot-stub

@@ -19,7 +19,7 @@ SYSLOG_FILE="/tmp/log/messages"
 [ -f "$SYSLOG_FILE" ] || SYSLOG_FILE="/opt/var/log/messages"
 
 # Available log tags (for filtering)
-LOG_TAGS="sing-box singbox-boot singbox-rules vpn-manager vpn-manager-autoinstall vpn-manager-installer vpn-manager-api subscription-update lists-update ndmc-postinstall syslog-rotate lighttpd"
+LOG_TAGS="sing-box singbox-boot singbox-rules vpn-manager vpn-manager-autoinstall vpn-manager-installer vpn-manager-api subscription-update lists-update ndmc-postinstall syslog-rotate lighttpd net-diag"
 
 # Maximum lines to output
 MAX_LINES=200
