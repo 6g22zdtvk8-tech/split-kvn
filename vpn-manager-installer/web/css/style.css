@@ -4766,3 +4766,48 @@ a.link:hover {
         display: none;
     }
 }
+
+/* B28: servers that left their subscription */
+.server-notices {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--status-warning);
+    border-left-width: 4px;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.server-notices.danger {
+    border-color: var(--status-error);
+}
+
+.server-notices ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.server-notices li + li {
+    margin-top: 0.25rem;
+}
+
+.server-notice-time {
+    color: var(--text-muted);
+    margin-right: 0.25rem;
+}
+
+.multi-missing {
+    margin-left: 0.5rem;
+    color: var(--status-warning);
+    font-size: 0.75rem;
+}
+
+@media (max-width: 600px) {
+    .server-notices {
+        flex-direction: column;
+    }
+}

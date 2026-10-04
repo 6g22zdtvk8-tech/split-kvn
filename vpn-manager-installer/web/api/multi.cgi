@@ -5,6 +5,8 @@
 #   POST /api/multi.cgi/members    {"members":[ids],"subscriptions":[ids],"primary":"id"?}
 #   POST /api/multi.cgi/primary    {"id":"id"}           (no sing-box restart)
 #   POST /api/multi.cgi/check      re-check every server now
+#   POST /api/multi.cgi/check-one  {"id":"id"} re-check one server now
+#   POST /api/multi.cgi/notices    clear the notices about vanished servers (B28)
 
 export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin"
 SCRIPT_DIR="$(dirname "$0")"
@@ -39,10 +41,6 @@ case "$REQUEST_METHOD" in
                         # Nothing ticked yet: start from the server that runs now
                         if [ "$(multi_effective "$STATE" | jq '.ids | length')" -eq 0 ]; then
                             ACTIVE=$(get_active_config)
-                            PROTO=$(jq -r '.protocol // ""' "$VPN_CONFIGS_DIR/$ACTIVE.json" 2>/dev/null)
-                            case "$PROTO" in
-                                wireguard|amneziawg) ACTIVE="" ;;
-                            esac
                             [ -n "$ACTIVE" ] && [ -f "$VPN_CONFIGS_DIR/$ACTIVE.json" ] || { json_error "multi.errors.empty" 400; exit 0; }
                             STATE=$(printf '%s' "$STATE" | jq -c --arg a "$ACTIVE" '.members = [$a] | .primary = $a')
                         fi
@@ -77,12 +75,10 @@ case "$REQUEST_METHOD" in
                 NEW=$(printf '%s' "$STATE" | jq -c --argjson b "$BODY" '
                     .members = ([$b.members[]? | strings]) | .subscriptions = ([$b.subscriptions[]? | strings])
                     | (if ($b.primary | type) == "string" and $b.primary != "" then .primary = $b.primary else . end)')
-                # Ticked WireGuard/AmneziaWG or missing configs are refused outright
+                # Missing configs are refused outright (WireGuard/AmneziaWG take part as endpoints)
                 BAD=$(multi_catalog | jq -r --argjson st "$NEW" '
                     (map({key: .id, value: .protocol}) | from_entries) as $p
-                    | [$st.members[] | if $p[.] == null then "notFound"
-                                       elif $p[.] == "wireguard" or $p[.] == "amneziawg" then "wireguard"
-                                       else empty end] | first // empty')
+                    | [$st.members[] | if $p[.] == null then "notFound" else empty end] | first // empty')
                 [ -z "$BAD" ] || { json_error "multi.errors.$BAD" 400; exit 0; }
                 EFF=$(multi_effective "$NEW")
                 [ "$(printf '%s' "$EFF" | jq '.ids | length')" -gt 0 ] || { json_error "multi.errors.empty" 400; exit 0; }
@@ -108,9 +104,22 @@ case "$REQUEST_METHOD" in
                 respond_state
                 ;;
 
+            notices)
+                rm -f "$SERVER_NOTICES"
+                respond_state
+                ;;
+
             check)
-                # Ask sing-box to re-test the whole group now (it answers when done)
-                curl -s -m 20 "$CLASH_API/group/vpn-auto/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=5000" >/dev/null 2>&1
+                # Re-test the whole group now and remember who did not answer
+                multi_check_all
+                respond_state
+                ;;
+
+            check-one)
+                ID=$(printf '%s' "$BODY" | jq -r '.id // empty')
+                multi_effective "$STATE" | jq -e --arg id "$ID" '.ids | index($id)' >/dev/null 2>&1 \
+                    || { json_error "multi.errors.notFound" 400; exit 0; }
+                multi_check_one "$ID"
                 respond_state
                 ;;
 

@@ -481,8 +481,8 @@ run_check() {
     local mode=$(read_setting "failover_mode" "off")
     local can_switch="true"
 
-    # Several connections: sing-box itself moves traffic to a live server,
-    # a second switcher would only fight it
+    # Several connections: sing-box moves traffic to a live server, and multi-health.sh
+    # (every minute) moves it off a dead main server; a third switcher would only fight them
     if jq -e '.mode == "multi"' "$VPN_MANAGER_HOME/multi.json" >/dev/null 2>&1; then
         [ "$manual" = "manual" ] && log "Multi mode is on — sing-box handles failover, nothing to do"
         return 0

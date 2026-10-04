@@ -257,12 +257,14 @@ case "$REQUEST_METHOD" in
             
             # Generate ID
             CONFIG_ID=$(echo "$NAME" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_-' | head -c 32)
-            [ -z "$CONFIG_ID" ] && CONFIG_ID=$(date +%s)
-            
-            # Check ID uniqueness
-            if [ -f "$VPN_CONFIGS_DIR/$CONFIG_ID.json" ]; then
-                CONFIG_ID="${CONFIG_ID}_$(date +%s)"
-            fi
+            # A non-Latin name ("AWG Польша") leaves almost nothing: use a generated id,
+            # as subscriptions do. And never reuse an id — two servers added within the
+            # same second used to get the same "<id>_<time>" and overwrite each other.
+            [ "$(printf '%s' "$CONFIG_ID" | tr -cd 'a-zA-Z0-9' | wc -c)" -ge 3 ] || CONFIG_ID="server_$(date +%s)"
+            ID_BASE="$CONFIG_ID"
+            while [ -f "$VPN_CONFIGS_DIR/$CONFIG_ID.json" ]; do
+                CONFIG_ID="${ID_BASE}_$(head -c 4 /dev/urandom | md5sum | cut -c1-6)"
+            done
             
             NOW=$(date '+%Y-%m-%dT%H:%M:%S')
             
@@ -359,68 +361,31 @@ case "$REQUEST_METHOD" in
   \"transport_path\": \"$TRANSPORT_PATH\",
   \"transport_host\": \"$TRANSPORT_HOST\""
                     ;;
-                wireguard)
-                    PRIVATE_KEY=$(json_get_value "$POST_DATA" "private_key")
-                    PEER_PUBLIC_KEY=$(json_get_value "$POST_DATA" "peer_public_key")
-                    PRE_SHARED_KEY=$(json_get_value "$POST_DATA" "pre_shared_key")
-                    LOCAL_ADDRESS=$(json_get_value "$POST_DATA" "local_address")
-                    MTU=$(json_get_number "$POST_DATA" "mtu")
-                    RESERVED=$(json_get_value "$POST_DATA" "reserved")
-                    [ -z "$PRIVATE_KEY" ] && { json_error "Private Key is required for WireGuard" 400; exit 0; }
-                    [ -z "$PEER_PUBLIC_KEY" ] && { json_error "Peer Public Key is required for WireGuard" 400; exit 0; }
-                    [ -z "$MTU" ] && MTU=1280
-                    CONFIG_JSON="$CONFIG_JSON,
-  \"private_key\": \"$PRIVATE_KEY\",
-  \"peer_public_key\": \"$PEER_PUBLIC_KEY\",
-  \"pre_shared_key\": \"$PRE_SHARED_KEY\",
-  \"local_address\": \"$LOCAL_ADDRESS\",
-  \"mtu\": $MTU,
-  \"reserved\": \"$RESERVED\""
-                    ;;
-                amneziawg)
-                    PRIVATE_KEY=$(json_get_value "$POST_DATA" "private_key")
-                    PEER_PUBLIC_KEY=$(json_get_value "$POST_DATA" "peer_public_key")
-                    PRE_SHARED_KEY=$(json_get_value "$POST_DATA" "preshared_key")
-                    LOCAL_ADDRESS=$(json_get_value "$POST_DATA" "local_address")
-                    MTU=$(json_get_number "$POST_DATA" "mtu")
-                    # AmneziaWG obfuscation
-                    AWG_JC=$(json_get_number "$POST_DATA" "jc")
-                    AWG_JMIN=$(json_get_number "$POST_DATA" "jmin")
-                    AWG_JMAX=$(json_get_number "$POST_DATA" "jmax")
-                    AWG_S1=$(json_get_number "$POST_DATA" "s1")
-                    AWG_S2=$(json_get_number "$POST_DATA" "s2")
-                    AWG_H1=$(json_get_number "$POST_DATA" "h1")
-                    AWG_H2=$(json_get_number "$POST_DATA" "h2")
-                    AWG_H3=$(json_get_number "$POST_DATA" "h3")
-                    AWG_H4=$(json_get_number "$POST_DATA" "h4")
-                    [ -z "$PRIVATE_KEY" ] && { json_error "Private Key is required for AmneziaWG" 400; exit 0; }
-                    [ -z "$PEER_PUBLIC_KEY" ] && { json_error "Peer Public Key is required for AmneziaWG" 400; exit 0; }
-                    [ -z "$MTU" ] && MTU=1280
-                    CONFIG_JSON="$CONFIG_JSON,
-  \"private_key\": \"$PRIVATE_KEY\",
-  \"peer_public_key\": \"$PEER_PUBLIC_KEY\",
-  \"preshared_key\": \"$PRE_SHARED_KEY\",
-  \"local_address\": \"$LOCAL_ADDRESS\",
-  \"mtu\": $MTU"
-                    # Add AmneziaWG parameters if set
-                    [ -n "$AWG_JC" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"jc\": $AWG_JC"
-                    [ -n "$AWG_JMIN" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"jmin\": $AWG_JMIN"
-                    [ -n "$AWG_JMAX" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"jmax\": $AWG_JMAX"
-                    [ -n "$AWG_S1" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"s1\": $AWG_S1"
-                    [ -n "$AWG_S2" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"s2\": $AWG_S2"
-                    [ -n "$AWG_H1" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"h1\": $AWG_H1"
-                    [ -n "$AWG_H2" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"h2\": $AWG_H2"
-                    [ -n "$AWG_H3" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"h3\": $AWG_H3"
-                    [ -n "$AWG_H4" ] && CONFIG_JSON="$CONFIG_JSON,
-  \"h4\": $AWG_H4"
+                wireguard|amneziawg)
+                    # Keys, addresses and every AmneziaWG field as the .conf parser gives them
+                    # (S1-S4 numbers, H1-H4 a number or "from-to", I1-I5 strings), whichever
+                    # AWG version the server speaks (B29)
+                    WG_JSON=$(printf '%s' "$POST_DATA" | jq -c '
+                        def num: if type == "string" and . != "" then tonumber else . end;
+                        ((.persistent_keepalive // "") | tostring) as $ka
+                        | {private_key: (.private_key // ""), peer_public_key: (.peer_public_key // ""),
+                         local_address: (.local_address // ""), mtu: ((.mtu // 1280) | num)}
+                        + (if ((.pre_shared_key // .preshared_key // "") != "") then {pre_shared_key: (.pre_shared_key // .preshared_key)} else {} end)
+                        + (if ((.dns // "") != "") then {dns: .dns} else {} end)
+                        + (if ((.allowed_ips // "") != "") then {allowed_ips: .allowed_ips} else {} end)
+                        # keepalive: a number, or a "from-to" range (AWG 3.0)
+                        + (if $ka == "" or $ka == "0" then {} elif ($ka | contains("-")) then {persistent_keepalive: $ka}
+                           else {persistent_keepalive: ($ka | tonumber)} end)
+                        + ([(["jc","jmin","jmax","s1","s2","s3","s4"][] as $k | {key: $k, value: (.[$k] // "" | num)} | select(.value != "" and .value != null)),
+                            (["h1","h2","h3","h4","i1","i2","i3","i4","i5","header_protection_key","content_padding_addition",
+                              "rekey_after_time","rekey_timeout","reject_after_time","keepalive_timeout","max_handshake_attempts"][] as $k
+                             | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "null"))]
+                           | from_entries)' 2>/dev/null)
+                    [ -n "$WG_JSON" ] || { json_error "Invalid data" 400; exit 0; }
+                    [ -n "$(printf '%s' "$WG_JSON" | jq -r '.private_key')" ] || { json_error "Private Key is required" 400; exit 0; }
+                    [ -n "$(printf '%s' "$WG_JSON" | jq -r '.peer_public_key')" ] || { json_error "Peer Public Key is required" 400; exit 0; }
+                    [ -n "$(printf '%s' "$WG_JSON" | jq -r '.local_address')" ] || { json_error "Local address is required" 400; exit 0; }
+                    CONFIG_JSON="$CONFIG_JSON,$(printf '%s' "$WG_JSON" | jq -c . | sed 's/^{//; s/}$//')"
                     ;;
                 hysteria2)
                     PASSWORD=$(json_get_value "$POST_DATA" "password")
@@ -761,7 +726,14 @@ case "$REQUEST_METHOD" in
         echo "$POST_DATA" > "$TMP_POST"
         
         # Merge current config with new data
-        jq -s '.[0] * .[1] | .updated_at = "'"$NOW"'" | if .udp_over_tcp == false then del(.udp_over_tcp) else . end' "$CONFIG_FILE" "$TMP_POST" > "$TMP_FILE" 2>/dev/null
+        # WireGuard/AmneziaWG: the form sends every field, an emptied one as "" — it is
+        # removed, not kept from before (a cleared pre-shared key or I1 must go away), and
+        # the old "preshared_key" spelling gives way to "pre_shared_key" (B29)
+        jq -s '.[1] as $post | .[0] * .[1] | .updated_at = "'"$NOW"'" | if .udp_over_tcp == false then del(.udp_over_tcp) else . end
+            | if (.protocol == "wireguard" or .protocol == "amneziawg") then
+                (if ($post | has("pre_shared_key")) then del(.preshared_key) else . end)
+                | with_entries(select(.value != "" and .value != null))
+              else . end' "$CONFIG_FILE" "$TMP_POST" > "$TMP_FILE" 2>/dev/null
         rm -f "$TMP_POST"
         
         if [ -s "$TMP_FILE" ] && jq -e . "$TMP_FILE" >/dev/null 2>&1; then

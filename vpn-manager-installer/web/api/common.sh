@@ -481,7 +481,7 @@ list_configs() {
 #   m-<id>    one outbound per ticked server
 # Everything else (lists, device policies, DNS, the VPN server) keeps pointing at "vpn".
 MULTI_FILE="$VPN_MANAGER_HOME/multi.json"
-MULTI_LIMIT=20
+MULTI_LIMIT=32
 CLASH_API="http://127.0.0.1:9090"
 
 multi_state() {
@@ -496,6 +496,72 @@ multi_is_on() {
     [ "$(multi_state | jq -r '.mode')" = "multi" ]
 }
 
+# --- B28: servers that vanish from a subscription ------------------------------
+# A server the provider stops listing keeps its file with "missing_since" and is
+# removed only after MISSING_GRACE seconds (seen missing by two fetches at least).
+MISSING_GRACE="${MISSING_GRACE:-86400}"
+SERVER_NOTICES="$VPN_MANAGER_HOME/server-notices.json"
+
+# Remember an event for the panel: server_notice_add <kind> <text-json-object>
+# kinds: removed (a group/active server left its subscription), primary (main server
+# changed), empty (nothing left to run, switched to another server). Last 20 kept.
+server_notice_add() {
+    local cur='[]' tmp="$SERVER_NOTICES.tmp"
+    [ -s "$SERVER_NOTICES" ] && jq -e 'type == "array"' "$SERVER_NOTICES" >/dev/null 2>&1 && cur=$(cat "$SERVER_NOTICES")
+    printf '%s' "$cur" | jq -c --arg k "$1" --argjson d "$2" --argjson t "$(date +%s)" \
+        '(. + [{kind: $k, time: $t} + $d]) | .[-20:]' > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$SERVER_NOTICES" || rm -f "$tmp"
+}
+
+# Before a vanished server's file is deleted: a notice if it mattered (in the group or active)
+server_notice_removed() {
+    local f="$1" sub="$2" id
+    id=$(basename "$f" .json)
+    if multi_state | jq -e --arg i "$id" '.members | index($i)' >/dev/null 2>&1 || [ "$(get_active_config)" = "$id" ]; then
+        server_notice_add removed "$(jq -c --arg s "$sub" '{id: .id, name: (.name // .id), subscription_id: $s}' "$f" 2>/dev/null || echo '{}')"
+    fi
+    log_action "SUBSCRIPTION_MISSING" "Server $id ($(jq -r '.name // ""' "$f" 2>/dev/null)) missing for over $MISSING_GRACE s, removed"
+}
+
+# Does this server carry traffic? A throwaway sing-box with only this server on a
+# spare local port — the running VPN is not touched. Returns 0 when it answers.
+probe_server() {
+    local f="$VPN_CONFIGS_DIR/$1.json" out cfg="/tmp/probe-$$.json" pid ok=1
+    [ -f "$f" ] || return 1
+    out=$(generate_outbound_json "$f" probe) || return 1
+    jq -n --argjson o "$out" '{log: {level: "error"}, dns: {servers: [{type: "udp", tag: "d", server: "77.88.8.8"}]},
+        route: {default_domain_resolver: "d", final: "probe"},
+        inbounds: [{type: "socks", tag: "s", listen: "127.0.0.1", listen_port: 2098}]}
+        + (if $o.type == "wireguard" then {endpoints: [$o], outbounds: [{type: "direct", tag: "direct"}]}
+           else {outbounds: [$o, {type: "direct", tag: "direct"}]} end)' > "$cfg" 2>/dev/null || { rm -f "$cfg"; return 1; }
+    sing-box run -c "$cfg" >/dev/null 2>&1 &
+    pid=$!
+    sleep 2
+    # WireGuard/AmneziaWG: the first request waits for the handshake (~5 s)
+    curl -s -m 10 -o /dev/null -w '%{http_code}' --socks5-hostname 127.0.0.1:2098 https://www.gstatic.com/generate_204 2>/dev/null | grep -q '^204$' && ok=0
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    rm -f "$cfg"
+    return $ok
+}
+
+# Nothing left to run: the first server that really answers, from subscription $1
+# first, then from the others; servers marked missing last. Prints its id.
+find_working_server() {
+    local pref="$1" f id tries=0 list
+    list=$(for f in "$VPN_CONFIGS_DIR"/*.json; do [ -f "$f" ] && jq -c '{id, s: (.subscription_id // ""), m: has("missing_since"), p: (.protocol // "")}' "$f" 2>/dev/null; done \
+        | jq -rs --arg p "$pref" 'sort_by([.m, (if .s == $p then 0 else 1 end)]) | .[].id')
+    for id in $list; do
+        tries=$((tries + 1))
+        [ $tries -le 20 ] || break
+        if probe_server "$id"; then
+            log_action "FIND_SERVER" "Server $id answers (tried $tries)"
+            echo "$id"
+            return 0
+        fi
+    done
+    log_action "FIND_SERVER" "No server answered ($tries tried)"
+    return 1
+}
+
 multi_save() {
     local tmp="$MULTI_FILE.tmp"
     printf '%s' "$1" | jq -c '.' > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$MULTI_FILE" || { rm -f "$tmp"; return 1; }
@@ -507,17 +573,18 @@ multi_catalog() {
     [ -n "$files" ] || { echo '[]'; return; }
     # shellcheck disable=SC2086
     jq -c -s '[.[] | {id: (.id // ""), name: (.name // .id // ""), protocol: (.protocol // "shadowsocks"),
-                      subscription_id: (.subscription_id // "")} | select(.id != "")]' $files 2>/dev/null || echo '[]'
+                      subscription_id: (.subscription_id // ""), missing_since: (.missing_since // null)} | select(.id != "")]' $files 2>/dev/null || echo '[]'
 }
 
 # The servers sing-box runs: ticked servers first, then the servers of ticked
-# subscriptions; no WireGuard/AmneziaWG, no duplicates, at most MULTI_LIMIT.
+# subscriptions; no duplicates, at most MULTI_LIMIT. WireGuard/AmneziaWG take part as
+# endpoints (sing-box groups accept endpoint tags like outbound tags).
 # Prints {ids: [...], truncated: N}
 multi_effective() {
     local state="${1:-$(multi_state)}"
     multi_catalog | jq -c --argjson st "$state" --argjson limit "$MULTI_LIMIT" '
         . as $cat
-        | [$cat[] | select(.protocol != "wireguard" and .protocol != "amneziawg")] as $ok
+        | $cat as $ok
         | ($ok | map(.id)) as $okids
         | ([$st.members[] | select(. as $m | $okids | index($m))]
            + [$ok[] | select(.subscription_id as $s | $s != "" and ($st.subscriptions | index($s))) | .id])
@@ -533,7 +600,21 @@ apply_multi_config() {
     [ -n "$ids" ] || { log_action "MULTI" "No servers to run"; return 1; }
 
     local primary=$(printf '%s' "$state" | jq -r '.primary')
-    printf '%s\n' "$ids" | grep -qxF "$primary" || primary=$(printf '%s\n' "$ids" | head -1)
+    if ! printf '%s\n' "$ids" | grep -qxF "$primary"; then
+        # The main server is gone: the fastest live server of the group by sing-box's
+        # last check takes over (B28), the first one when none has been measured
+        local old_primary="$primary" px_now
+        px_now=$(curl -s -m 3 "$CLASH_API/proxies" 2>/dev/null)
+        primary=$(printf '%s\n' "$ids" | jq -R . | jq -rs --argjson px "$(printf '%s' "$px_now" | jq -c '.proxies // {}' 2>/dev/null || echo '{}')" '
+            map({id: ., d: (($px["m-" + .].history // []) | if length > 0 then .[-1].delay else 0 end)})
+            | (map(select(.d > 0)) | sort_by(.d) | .[0].id) // .[0].id' 2>/dev/null)
+        [ -n "$primary" ] && [ "$primary" != "null" ] || primary=$(printf '%s\n' "$ids" | head -1)
+        if [ -n "$old_primary" ]; then
+            server_notice_add primary "$(jq -c -n --arg o "$old_primary" --arg n "$primary" \
+                --arg nn "$(jq -r '.name // ""' "$VPN_CONFIGS_DIR/$primary.json" 2>/dev/null)" '{old: $o, id: $n, name: $nn}')"
+            log_action "MULTI" "Main server $old_primary is gone, main is now $primary"
+        fi
+    fi
 
     local items="[" tags="[" id out first=1
     for id in $ids; do
@@ -542,7 +623,10 @@ apply_multi_config() {
         # A dead server must fail fast, so the fallback moves on: without this a
         # dropped connection waits for the system TCP timeout (15 s+) — tested on the router.
         # 3 s: a live VPN server answers the TCP handshake well within it
-        out=$(printf '%s' "$out" | jq -c '. + {connect_timeout: "3s"}') || continue
+        # WireGuard/AmneziaWG: the first connection waits for the handshake (junk
+        # packets + handshake, ~5 s on a fresh start) — 3 s would fail it and send the
+        # main server to the fallback blacklist for 3 minutes
+        out=$(printf '%s' "$out" | jq -c 'if .type == "wireguard" then . + {connect_timeout: "10s"} else . + {connect_timeout: "3s"} end') || continue
         [ $first -eq 1 ] || { items="$items,"; tags="$tags,"; }
         items="$items$out"
         tags="$tags\"m-$id\""
@@ -640,11 +724,17 @@ multi_follow_members() {
         if [ -z "$new" ]; then
             for f in "$VPN_CONFIGS_DIR"/*.json; do
                 [ -f "$f" ] || continue
-                jq -e --arg s "$sub" --arg n "$name" '.subscription_id == $s and .name == $n' "$f" >/dev/null 2>&1 \
+                jq -e --arg s "$sub" --arg n "$name" '.subscription_id == $s and .name == $n and (has("missing_since") | not)' "$f" >/dev/null 2>&1 \
                     && { new=$(basename "$f" .json); break; }
             done
         fi
-        [ -n "$new" ] || continue
+        if [ -z "$new" ]; then
+            # Really gone (B28): out of the group, no stand-in. The main server keeps its
+            # id here — apply_multi_config sees it missing and picks the new main.
+            state=$(printf '%s' "$state" | jq -c --arg o "$id" '.members -= [$o]')
+            changed=1
+            continue
+        fi
         state=$(printf '%s' "$state" | jq -c --arg o "$id" --arg n "$new" \
             '.members |= map(if . == $o then $n else . end) | (if .primary == $o then .primary = $n else . end)')
         log_action "MULTI" "Server $id came back as $new after the refresh, kept in the group"
@@ -659,13 +749,68 @@ multi_follow_members() {
 multi_resync() {
     multi_is_on || return 0
     local want=$(multi_effective | jq -c '.ids | sort')
-    local have=$(jq -c '[.outbounds[]? | .tag // "" | select(startswith("m-")) | ltrimstr("m-")] | sort' "$SINGBOX_CONFIG" 2>/dev/null)
+    # WireGuard/AmneziaWG members live in .endpoints, the rest in .outbounds — missing the
+    # endpoints made every subscription refresh "change" the set and restart sing-box (B29)
+    local have=$(jq -c '[(.outbounds[]?, .endpoints[]?) | .tag // "" | select(startswith("m-")) | ltrimstr("m-")] | sort' "$SINGBOX_CONFIG" 2>/dev/null)
+    if [ "$want" = "[]" ] && [ "$have" != "[]" ]; then
+        # The whole group is gone (B28): the first server that answers, preferring the
+        # subscription the group came from, becomes the group
+        # (their files are deleted by now; the removal notices still name the subscription)
+        # Nothing answered within the last hour: do not test up to 20 servers again on
+        # every refresh of every subscription
+        jq -e --argjson now "$(date +%s)" '[.[] | select(.kind == "empty" and .id == "" and .time > $now - 3600)] | length > 0' \
+            "$SERVER_NOTICES" >/dev/null 2>&1 && return 1
+        local was_sub=$(jq -r '[.[] | select(.kind == "removed")] | .[-1].subscription_id // empty' "$SERVER_NOTICES" 2>/dev/null)
+        local rescue=$(find_working_server "$was_sub")
+        if [ -z "$rescue" ]; then
+            server_notice_add empty '{"id":"","name":""}'
+            log_action "MULTI" "Group is empty and no server answered; sing-box left as it was"
+            return 1
+        fi
+        multi_save "$(multi_state | jq -c --arg r "$rescue" '.members = [$r] | .primary = $r')"
+        server_notice_add empty "$(jq -c '{id: .id, name: (.name // .id)}' "$VPN_CONFIGS_DIR/$rescue.json")"
+        log_action "MULTI" "Group is empty, switched to $rescue"
+        want="[\"$rescue\"]"
+    fi
     [ "$want" = "$have" ] && return 0
     log_action "MULTI" "Server set changed, rebuilding the group"
     apply_multi_config && multi_restart_vpn
 }
 
 # Live view for the panel: per server status and last delay from the Clash API
+# Results of our own checks of the group, in RAM: sing-box forgets a server whose check
+# failed (no history → the panel said "not checked"), so we keep who did not answer and why.
+# {"m-<id>": {ok, delay, error, time}}
+MULTI_CHECKS="/tmp/vpn-manager/multi-check.json"
+
+multi_checks_merge() {
+    mkdir -p /tmp/vpn-manager
+    local cur='{}'
+    [ -s "$MULTI_CHECKS" ] && jq -e 'type == "object"' "$MULTI_CHECKS" >/dev/null 2>&1 && cur=$(cat "$MULTI_CHECKS")
+    printf '%s' "$cur" | jq -c --argjson add "$1" '. + $add' > "$MULTI_CHECKS.tmp" 2>/dev/null && mv "$MULTI_CHECKS.tmp" "$MULTI_CHECKS"
+}
+
+# Check one server of the group now through sing-box itself; records the result
+multi_check_one() {
+    local id="$1" r t=$(date +%s)
+    r=$(curl -s -m 12 "$CLASH_API/proxies/m-$id/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" 2>/dev/null)
+    multi_checks_merge "$(printf '%s' "$r" | jq -c --arg k "m-$id" --argjson t "$t" '
+        if (.delay // 0) > 0 then {($k): {ok: true, delay: .delay, time: $t}}
+        else {($k): {ok: false, error: (if (.message // "") == "Timeout" then "timeout" else "failed" end), time: $t}} end' 2>/dev/null \
+        || printf '{"m-%s":{"ok":false,"error":"failed","time":%s}}' "$id" "$t")"
+}
+
+# Check the whole group: sing-box returns only the servers that answered
+multi_check_all() {
+    local r t=$(date +%s) ids
+    r=$(curl -s -m 25 "$CLASH_API/group/vpn-auto/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" 2>/dev/null)
+    printf '%s' "$r" | jq -e 'type == "object" and length > 0' >/dev/null 2>&1 || return 0
+    ids=$(multi_effective | jq -c '[.ids[] | "m-" + .]')
+    multi_checks_merge "$(printf '%s' "$r" | jq -c --argjson ids "$ids" --argjson t "$t" '
+        . as $ok | [$ids[] | {key: ., value: (if ($ok[.] // 0) > 0 then {ok: true, delay: $ok[.], time: $t}
+                                              else {ok: false, error: "timeout", time: $t} end)}] | from_entries')"
+}
+
 multi_status_json() {
     local state=$(multi_state)
     local eff=$(multi_effective "$state")
@@ -673,8 +818,12 @@ multi_status_json() {
     printf '%s' "$proxies" | jq -e '.proxies' >/dev/null 2>&1 || proxies='{"proxies":{}}'
     local running=false
     check_ss_running && running=true
-    multi_catalog | jq -c --argjson st "$state" --argjson eff "$eff" --argjson px "$proxies" \
-        --argjson limit "$MULTI_LIMIT" --argjson running "$running" '
+    local notices='[]'
+    [ -s "$SERVER_NOTICES" ] && jq -e 'type == "array"' "$SERVER_NOTICES" >/dev/null 2>&1 && notices=$(jq -c '.[-5:]' "$SERVER_NOTICES")
+    local checks='{}'
+    [ -s "$MULTI_CHECKS" ] && jq -e 'type == "object"' "$MULTI_CHECKS" >/dev/null 2>&1 && checks=$(cat "$MULTI_CHECKS")
+    multi_catalog | jq -c --argjson st "$state" --argjson eff "$eff" --argjson px "$proxies" --argjson notices "$notices" \
+        --argjson limit "$MULTI_LIMIT" --argjson running "$running" --argjson chk "$checks" --argjson now "$(date +%s)" '
         (map({key: .id, value: .}) | from_entries) as $cat
         | $px.proxies as $p
         | ($p["vpn-main"].now // ("m-" + $st.primary)) as $main
@@ -686,13 +835,20 @@ multi_status_json() {
         | (if $fb == "vpn-auto" then $auto elif $fb == "vpn-main" then $main else $fb end) as $carrier
         | def last_delay($t): ($p[$t].history // []) | if length > 0 then .[-1].delay else null end;
           def alive($t): ($p[$t].alive // null);
-        {mode: $st.mode, limit: $limit, primary: $st.primary, members: $st.members,
+        {mode: $st.mode, limit: $limit, primary: $st.primary, members: $st.members, notices: $notices,
            last_check: ([$eff.ids[] | ($p["m-" + .].history // []) | .[-1].time? // empty] | max),
            subscriptions: $st.subscriptions, truncated: $eff.truncated, running: $running,
            effective: [$eff.ids[] | . as $id | ("m-" + $id) as $t | last_delay($t) as $d
              | ($cat[$id] // {id: $id, name: $id, protocol: "", subscription_id: ""})
+             # our own last check, if newer than sing-box history says: a failed check
+             # leaves sing-box with no history at all ("not checked" before)
+             | ($chk[$t] // null) as $c
+             | ($c != null and ($now - ($c.time // 0)) < 900) as $cfresh
+             | (if $cfresh and $c.ok == false and ($d == null or $d == 0) then $c.error else null end) as $err
+             | (if $d == null and $cfresh and $c.ok == true then $c.delay else $d end) as $d
+             | . + {check_error: $err}
              + {delay: (if $d == null or $d == 0 then null else $d end),
-                status: (if $d == 0 or alive($t) == false or ($t == $main and $main_out) then "down"
+                status: (if $err != null or $d == 0 or alive($t) == false or ($t == $main and $main_out) then "down"
                          elif $t == $main then "primary"
                          elif $d == null then "unknown" else "reserve" end),
                 main: ($t == $main),
@@ -881,67 +1037,43 @@ generate_outbound_json() {
                        + (if (.alpn // "") != "" then {alpn: (.alpn | split(","))} else {} end))}
                 + (if (.obfs // "") != "" then {obfs: {type: .obfs, password: (.obfs_password // "")}} else {} end)' "$config_file" 2>/dev/null
             ;;
-        wireguard)
-            local private_key=$(json_get_value "$config_data" "private_key")
-            local peer_public_key=$(json_get_value "$config_data" "peer_public_key")
-            local pre_shared_key=$(json_get_value "$config_data" "pre_shared_key")
-            local reserved=$(json_get_value "$config_data" "reserved")
-            local mtu=$(json_get_number "$config_data" "mtu")
-            local local_address=$(json_get_value "$config_data" "local_address")
-            
-            [ -z "$mtu" ] && mtu=1280
-            
-            local psk_json=""
-            [ -n "$pre_shared_key" ] && psk_json=",\"pre_shared_key\":\"$pre_shared_key\""
-            
-            # sing-box-extended 2.x has no "reserved" on a WireGuard peer: it is dropped
-            # (only Cloudflare WARP uses it; such a config needs a WARP-aware client)
-            local reserved_json=""
-            
+        wireguard|amneziawg)
             # sing-box 1.13+: WireGuard is an endpoint, not an outbound (apply_singbox_outbound
-            # puts it into .endpoints); the peer carries the server and the keys
-            echo "{\"type\":\"wireguard\",\"tag\":\"$tag\",\"address\":[\"$local_address\"],\"private_key\":\"$private_key\",\"mtu\":$mtu,\"peers\":[{\"address\":\"$server\",\"port\":$server_port,\"public_key\":\"$peer_public_key\"$psk_json,\"allowed_ips\":[\"0.0.0.0/0\",\"::/0\"]$reserved_json}]}"
-            ;;
-        amneziawg)
-            # AmneziaWG — WireGuard with obfuscation (sing-box Extended)
-            local private_key=$(json_get_value "$config_data" "private_key")
-            local peer_public_key=$(json_get_value "$config_data" "peer_public_key")
-            local preshared_key=$(json_get_value "$config_data" "preshared_key")
-            local mtu=$(json_get_number "$config_data" "mtu")
-            local local_address=$(json_get_value "$config_data" "local_address")
-            # AmneziaWG obfuscation parameters
-            local jc=$(json_get_number "$config_data" "jc")
-            local jmin=$(json_get_number "$config_data" "jmin")
-            local jmax=$(json_get_number "$config_data" "jmax")
-            local s1=$(json_get_number "$config_data" "s1")
-            local s2=$(json_get_number "$config_data" "s2")
-            local h1=$(json_get_number "$config_data" "h1")
-            local h2=$(json_get_number "$config_data" "h2")
-            local h3=$(json_get_number "$config_data" "h3")
-            local h4=$(json_get_number "$config_data" "h4")
-            
-            [ -z "$mtu" ] && mtu=1280
-            
-            local psk_json=""
-            [ -n "$preshared_key" ] && psk_json=",\"pre_shared_key\":\"$preshared_key\""
-            
-            # AmneziaWG parameters in "amnezia" object for sing-box Extended
-            # Format: https://github.com/shtorm-7/sing-box-extended/blob/extended/examples/amnezia/client.json
-            local amnezia_inner=""
-            [ -n "$jc" ] && amnezia_inner="\"jc\":$jc"
-            [ -n "$jmin" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"jmin\":$jmin"; }
-            [ -n "$jmax" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"jmax\":$jmax"; }
-            [ -n "$s1" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"s1\":$s1"; }
-            [ -n "$s2" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"s2\":$s2"; }
-            [ -n "$h1" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"h1\":$h1"; }
-            [ -n "$h2" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"h2\":$h2"; }
-            [ -n "$h3" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"h3\":$h3"; }
-            [ -n "$h4" ] && { [ -n "$amnezia_inner" ] && amnezia_inner="$amnezia_inner,"; amnezia_inner="${amnezia_inner}\"h4\":$h4"; }
-            
-            local amnezia_json=""
-            [ -n "$amnezia_inner" ] && amnezia_json=",\"amnezia\":{$amnezia_inner}"
-            
-            echo "{\"type\":\"wireguard\",\"tag\":\"$tag\",\"address\":[\"$local_address\"],\"private_key\":\"$private_key\",\"mtu\":$mtu,\"peers\":[{\"address\":\"$server\",\"port\":$server_port,\"public_key\":\"$peer_public_key\"$psk_json,\"allowed_ips\":[\"0.0.0.0/0\",\"::/0\"]}]$amnezia_json}"
+            # puts it into .endpoints). sing-box-extended 2.x has no "reserved" on a peer (WARP only).
+            # AmneziaWG — WireGuard with obfuscation, sing-box-extended "amnezia" object
+            # (examples/amnezia/client.json). Any AWG version: Jc/Jmin/Jmax, S1-S4 numbers,
+            # H1-H4 a number or a "from-to" range (kept as strings), I1-I5 signature packets.
+            # Zero means "off" and is left out, as sing-box does itself.
+            jq -c --arg tag "$tag" '
+                def num: if type == "string" then tonumber else . end;
+                {type: "wireguard", tag: $tag,
+                 address: ((.local_address // "") | split(",") | map(select(length > 0))),
+                 private_key: .private_key, mtu: ((.mtu // 1280) | num),
+                 peers: [{address: .server, port: (.server_port | num), public_key: .peer_public_key,
+                          allowed_ips: ["0.0.0.0/0", "::/0"]}
+                         + (if ((.pre_shared_key // .preshared_key // "") != "") then {pre_shared_key: (.pre_shared_key // .preshared_key)} else {} end)
+                         # a range ("25-35", AWG 3.0) → its lower end: sing-box takes one number
+                         + (((.persistent_keepalive // 0) | tostring | split("-")[0] | if . == "" then 0 else tonumber end) as $ka
+                            | if $ka > 0 then {persistent_keepalive_interval: $ka} else {} end)],
+                 amnezia: ([(["jc","jmin","jmax","s1","s2","s3","s4"][] as $k | {key: $k, value: (.[$k] // 0 | num)} | select(.value != 0)),
+                            (["h1","h2","h3","h4"][] as $k | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "0")),
+                            (["i1","i2","i3","i4","i5","header_protection_key"][] as $k | {key: $k, value: (.[$k] // "")} | select(.value != "")),
+                            # AWG 3.0 ranges: a number or "from-to", sing-box takes both as text
+                            (["content_padding_addition","rekey_after_time","rekey_timeout","reject_after_time",
+                              "keepalive_timeout","max_handshake_attempts"][] as $k | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "0"))]
+                           | from_entries)}
+                # sing-box-extended 2.7.2 (wireguard-go v0.0.6-extended-1.6.1): packets that come
+                # straight from the TUN get a buffer with room for only 16 bytes of padding, so a
+                # larger ContentPaddingAddition overruns it and sing-box panics (send.go:879,
+                # "slice bounds out of range … capacity 128"; test router 29.09). Until the fork
+                # is fixed the upper bound is capped at 16 — the padding is our own random
+                # addition, the server does not check its size.
+                | if (.amnezia.content_padding_addition // "") != "" then
+                    .amnezia.content_padding_addition |= (split("-") | map(tonumber) as $r
+                      | ([$r[-1], 16] | min) as $hi | ([$r[0], $hi] | min) as $lo
+                      | if $lo == $hi then ($hi | tostring) else "\($lo)-\($hi)" end)
+                  else . end
+                | if (.amnezia | length) == 0 then del(.amnezia) else . end' "$config_file" 2>/dev/null
             ;;
         hysteria2)
             local password=$(json_get_value "$config_data" "password")
@@ -1520,82 +1652,71 @@ parse_hysteria2_url() {
 parse_wireguard_conf() {
     local conf_data="$1"
     local name="${2:-}"
-    
-    local private_key="" address="" dns="" mtu=""
-    local public_key="" endpoint="" allowed_ips="" keepalive=""
-    local server="" port=""
-    
-    # AmneziaWG obfuscation parameters
-    local jc="" jmin="" jmax="" s1="" s2="" h1="" h2="" h3="" h4=""
-    local is_amnezia=0
-    
-    # Extract values via temp file
-    local tmp_file="/tmp/wg_parse_$$"
-    echo "$conf_data" | tr -d '\r' > "$tmp_file"
-    
-    private_key=$(grep -i "^PrivateKey" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    address=$(grep -i "^Address" "$tmp_file" | head -1 | cut -d'=' -f2- | cut -d',' -f1 | tr -d '[:space:]')
-    mtu=$(grep -i "^MTU" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    public_key=$(grep -i "^PublicKey" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    endpoint=$(grep -i "^Endpoint" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    
-    # AmneziaWG parameters (Jc, Jmin, Jmax, S1, S2, H1-H4)
-    jc=$(grep -i "^Jc" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    jmin=$(grep -i "^Jmin" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    jmax=$(grep -i "^Jmax" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    s1=$(grep -i "^S1" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    s2=$(grep -i "^S2" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    h1=$(grep -i "^H1" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    h2=$(grep -i "^H2" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    h3=$(grep -i "^H3" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    h4=$(grep -i "^H4" "$tmp_file" | head -1 | cut -d'=' -f2- | tr -d '[:space:]')
-    
-    rm -f "$tmp_file"
-    
-    # Detect AmneziaWG by presence of characteristic parameters
-    if [ -n "$jc" ] || [ -n "$h1" ]; then
-        is_amnezia=1
-    fi
-    
-    server=$(echo "$endpoint" | sed 's/:.*//')
-    port=$(echo "$endpoint" | sed 's/.*://')
-    
-    [ -z "$mtu" ] && mtu="1280"
-    
-    # Default name based on protocol
-    if [ -z "$name" ]; then
-        if [ "$is_amnezia" = "1" ]; then
-            name="AmneziaWG $server"
-        else
-            name="WireGuard $server"
-        fi
-    fi
-    
-    # Add /32 mask to address if missing (sing-box requires CIDR)
-    if [ -n "$address" ] && ! echo "$address" | grep -q '/'; then
-        address="${address}/32"
-    fi
-    
-    if [ -n "$server" ] && [ -n "$port" ] && [ -n "$private_key" ] && [ -n "$public_key" ]; then
-        if [ "$is_amnezia" = "1" ]; then
-            # AmneziaWG with obfuscation parameters
-            local awg_params=""
-            [ -n "$jc" ] && awg_params="$awg_params,\"jc\":$jc"
-            [ -n "$jmin" ] && awg_params="$awg_params,\"jmin\":$jmin"
-            [ -n "$jmax" ] && awg_params="$awg_params,\"jmax\":$jmax"
-            [ -n "$s1" ] && awg_params="$awg_params,\"s1\":$s1"
-            [ -n "$s2" ] && awg_params="$awg_params,\"s2\":$s2"
-            [ -n "$h1" ] && awg_params="$awg_params,\"h1\":$h1"
-            [ -n "$h2" ] && awg_params="$awg_params,\"h2\":$h2"
-            [ -n "$h3" ] && awg_params="$awg_params,\"h3\":$h3"
-            [ -n "$h4" ] && awg_params="$awg_params,\"h4\":$h4"
-            echo "{\"protocol\":\"amneziawg\",\"name\":\"$name\",\"server\":\"$server\",\"server_port\":$port,\"private_key\":\"$private_key\",\"peer_public_key\":\"$public_key\",\"local_address\":\"$address\",\"mtu\":$mtu$awg_params}"
-        else
-        echo "{\"protocol\":\"wireguard\",\"name\":\"$name\",\"server\":\"$server\",\"server_port\":$port,\"private_key\":\"$private_key\",\"peer_public_key\":\"$public_key\",\"local_address\":\"$address\",\"mtu\":$mtu}"
-        fi
-    else
-        echo "null"
-    fi
+
+    # key<TAB>value per line, section-qualified for the peer ("peer.endpoint"), keys lowercased.
+    # Only the first [Peer] counts; Address may be repeated or comma-separated.
+    local kv
+    kv=$(printf '%s\n' "$conf_data" | tr -d '\r' | awk '
+        /^[[:space:]]*[#;]/ || /^[[:space:]]*$/ { next }
+        /^[[:space:]]*\[/ { sec = tolower($0); gsub(/[][[:space:]]/, "", sec); if (sec == "peer") npeer++; next }
+        index($0, "=") {
+            k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            k = tolower(k)
+            if (sec == "peer") {
+                if (npeer != 1) next
+                if (k == "endpoint") {
+                    # host:port, [v6]:port
+                    if (substr(v, 1, 1) == "[") { h = substr(v, 2, index(v, "]") - 2); p = substr(v, index(v, "]") + 2) }
+                    else { n = split(v, a, ":"); p = a[n]; h = substr(v, 1, length(v) - length(p) - 1) }
+                    print "peer.host\t" h; print "peer.port\t" p
+                } else print "peer." k "\t" v
+            } else if (k == "address") {
+                n = split(v, a, ",")
+                for (i = 1; i <= n; i++) {
+                    x = a[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", x)
+                    if (x == "") continue
+                    if (index(x, "/") == 0) x = x (index(x, ":") ? "/128" : "/32")
+                    print "address\t" x
+                }
+            } else print k "\t" v
+        }')
+    [ -n "$kv" ] || { echo "null"; return; }
+
+    # AmneziaWG: Jc/Jmin/Jmax, S1-S4 (numbers), H1-H4 (number or "from-to" range),
+    # I1-I5 (signature packets, kept verbatim); AWG 3.0: HeaderProtectionKey and the
+    # ContentPaddingAddition / Rekey* / RejectAfterTime / KeepaliveTimeout /
+    # MaxHandshakeAttempts ranges (kept as text). Any of them makes it AmneziaWG.
+    printf '%s\n' "$kv" | jq -R -s -c --arg name "$name" '
+        [split("\n")[] | select(length > 0) | index("\t") as $i | {key: .[:$i], value: .[$i + 1:]}] as $kv
+        | def get($k): ([$kv[] | select(.key == $k) | .value] | first) // "";
+          def all($k): [$kv[] | select(.key == $k) | .value];
+        [get("peer.host"), get("peer.port")] as $hp
+        | all("address") as $addr
+        | ([["jc","jmin","jmax","s1","s2","s3","s4"][] as $k | get($k) | select(. != "") | {key: $k, value: tonumber}]
+           + [["h1","h2","h3","h4","i1","i2","i3","i4","i5"][] as $k | get($k) | select(. != "") | {key: $k, value: .}]
+           + [[["headerprotectionkey","header_protection_key"],["contentpaddingaddition","content_padding_addition"],
+               ["rekeyaftertime","rekey_after_time"],["rekeytimeout","rekey_timeout"],["rejectaftertime","reject_after_time"],
+               ["keepalivetimeout","keepalive_timeout"],["maxhandshakeattempts","max_handshake_attempts"]][] as $p
+              | get($p[0]) | select(. != "") | {key: $p[1], value: .}]
+          | from_entries) as $awg
+        | if $hp[0] == "" or $hp[1] == "" or get("privatekey") == "" or get("peer.publickey") == "" then null
+          else
+            (($awg | length) > 0) as $amnezia
+            | {protocol: (if $amnezia then "amneziawg" else "wireguard" end),
+               name: (if $name != "" then $name else ((if $amnezia then "AmneziaWG " else "WireGuard " end) + $hp[0]) end),
+               server: $hp[0], server_port: ($hp[1] | tonumber),
+               private_key: get("privatekey"), peer_public_key: get("peer.publickey"),
+               local_address: ($addr | join(",")),
+               mtu: ((get("mtu") | select(. != "") | tonumber) // 1280)}
+            + (if get("dns") != "" then {dns: get("dns")} else {} end)
+            + (if get("peer.allowedips") != "" then {allowed_ips: get("peer.allowedips")} else {} end)
+            + (if get("peer.presharedkey") != "" then {pre_shared_key: get("peer.presharedkey")} else {} end)
+            # AWG 3.0 may give a range ("25-35"): kept as text, a plain number as a number
+            + (if get("peer.persistentkeepalive") != "" then {persistent_keepalive: (get("peer.persistentkeepalive")
+                 | if contains("-") then . else tonumber end)} else {} end)
+            + $awg
+          end' 2>/dev/null || echo "null"
 }
 
 # Main URL parsing function
@@ -1797,24 +1918,36 @@ config_to_conf() {
     dns=$(cfg_get "$f" dns)
     mtu=$(cfg_get "$f" mtu)
     psk=$(cfg_get "$f" pre_shared_key)
+    [ -n "$psk" ] || psk=$(cfg_get "$f" preshared_key)
 
     echo "[Interface]"
     echo "PrivateKey = $(cfg_get "$f" private_key)"
     [ -n "$addr" ] && echo "Address = $addr"
     [ -n "$dns" ] && echo "DNS = $dns"
     [ -n "$mtu" ] && echo "MTU = $mtu"
-    # AmneziaWG obfuscation parameters, absent on plain WireGuard.
-    for k in jc jmin jmax s1 s2 h1 h2 h3 h4; do
-        local v
-        v=$(cfg_get "$f" "$k")
-        [ -n "$v" ] && echo "$(echo "$k" | tr 'a-z' 'A-Z') = $v"
+    # AmneziaWG obfuscation parameters (any AWG version), absent on plain WireGuard.
+    local v ka allowed srv
+    for k in Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5; do
+        v=$(cfg_get "$f" "$(echo "$k" | tr 'A-Z' 'a-z')")
+        [ -n "$v" ] && [ "$v" != "0" ] && echo "$k = $v"
+    done
+    for k in HeaderProtectionKey:header_protection_key ContentPaddingAddition:content_padding_addition \
+             RekeyAfterTime:rekey_after_time RekeyTimeout:rekey_timeout RejectAfterTime:reject_after_time \
+             KeepaliveTimeout:keepalive_timeout MaxHandshakeAttempts:max_handshake_attempts; do
+        v=$(cfg_get "$f" "${k#*:}")
+        [ -n "$v" ] && [ "$v" != "0" ] && echo "${k%%:*} = $v"
     done
     echo
     echo "[Peer]"
     echo "PublicKey = $(cfg_get "$f" peer_public_key)"
     [ -n "$psk" ] && echo "PresharedKey = $psk"
-    echo "AllowedIPs = $(cfg_get "$f" allowed_ips || echo '0.0.0.0/0, ::/0')"
-    echo "Endpoint = $(cfg_get "$f" server):$(cfg_get "$f" server_port)"
+    allowed=$(cfg_get "$f" allowed_ips)
+    echo "AllowedIPs = ${allowed:-0.0.0.0/0, ::/0}"
+    srv=$(cfg_get "$f" server)
+    case "$srv" in *:*) srv="[$srv]" ;; esac
+    echo "Endpoint = $srv:$(cfg_get "$f" server_port)"
+    ka=$(cfg_get "$f" persistent_keepalive)
+    [ -n "$ka" ] && [ "$ka" != "0" ] && echo "PersistentKeepalive = $ka"
 }
 
 # ============================================

@@ -1027,6 +1027,13 @@ setup_logrotate() {
     echo "*/10 * * * * $VPN_MANAGER_HOME/scripts/dns-dot-domains.sh >/dev/null 2>&1" >> "$crontab_file"
     log_ok "Per-domain DoT routing configured (every 10 minutes)"
 
+    # B29: several connections — move traffic off a dead main server (WireGuard/AmneziaWG
+    # never refuse a connection, so the fallback group alone does not notice). RAM only.
+    grep -v "multi-health" "$crontab_file" > "${crontab_file}.tmp" 2>/dev/null || true
+    mv "${crontab_file}.tmp" "$crontab_file"
+    echo "* * * * * $VPN_MANAGER_HOME/scripts/multi-health.sh >/dev/null 2>&1" >> "$crontab_file"
+    log_ok "Main server health check for several connections configured (every minute)"
+
     # B2: nightly self-update check. The line is always installed; the script
     # itself returns immediately while the panel switch is off, so this costs a
     # router that does not want updates one no-op a day.
@@ -1365,6 +1372,13 @@ install_vpn_manager() {
     fi
     
     # Failover daemon (auto-switch VPN configs when active is unreachable)
+    if [ -f "$SCRIPT_DIR/scripts/multi-health.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/multi-health.sh" "$VPN_MANAGER_HOME/scripts/"
+        chmod +x "$VPN_MANAGER_HOME/scripts/multi-health.sh"
+        sed -i 's/\r$//' "$VPN_MANAGER_HOME/scripts/multi-health.sh"
+        log_ok "Multi-mode health check installed"
+    fi
+
     if [ -f "$SCRIPT_DIR/scripts/failover-daemon.sh" ]; then
         cp "$SCRIPT_DIR/scripts/failover-daemon.sh" "$VPN_MANAGER_HOME/scripts/"
         chmod +x "$VPN_MANAGER_HOME/scripts/failover-daemon.sh"

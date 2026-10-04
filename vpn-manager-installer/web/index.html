@@ -434,12 +434,15 @@
                         </button>
                     </div>
                     
+                    <!-- B28: servers that left their subscription (filled by renderServerNotices) -->
+                    <div class="server-notices hidden" id="server-notices"></div>
+
                     <!-- Several-connections tile: replaces the failover tile in multi mode (filled by renderMultiUI) -->
                     <div class="auto-update-tile multi-tile hidden" id="multi-tile">
                         <div class="auto-update-header multi-header">
                             <div class="multi-title">
                                 <strong data-i18n="multi.tileTitle">Several connections</strong>
-                                <span class="multi-counter" id="multi-counter" data-i18n-title="multi.counterTitle">0 / 20</span>
+                                <span class="multi-counter" id="multi-counter" data-i18n-title="multi.counterTitle">0 / 32</span>
                                 <span class="auto-update-loader hidden" id="multi-loader">
                                     <svg class="spinner" viewBox="0 0 24 24" width="16" height="16">
                                         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/>
@@ -1355,25 +1358,58 @@
                             <label for="awg-s2">S2</label>
                             <input type="number" id="awg-s2" name="awg_s2" min="0" placeholder="Response padding">
                         </div>
+                        <div class="form-group flex-1">
+                            <label for="awg-s3">S3</label>
+                            <input type="number" id="awg-s3" name="awg_s3" min="0" placeholder="Cookie padding">
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="awg-s4">S4</label>
+                            <input type="number" id="awg-s4" name="awg_s4" min="0" placeholder="Data padding">
+                        </div>
                     </div>
                     
                     <div class="form-row">
                         <div class="form-group flex-1">
                             <label for="awg-h1">H1</label>
-                            <input type="number" id="awg-h1" name="awg_h1" placeholder="Header 1">
+                            <input type="text" id="awg-h1" name="awg_h1" inputmode="numeric" placeholder="Header 1 (123 or 100-200)">
                         </div>
                         <div class="form-group flex-1">
                             <label for="awg-h2">H2</label>
-                            <input type="number" id="awg-h2" name="awg_h2" placeholder="Header 2">
+                            <input type="text" id="awg-h2" name="awg_h2" inputmode="numeric" placeholder="Header 2 (123 or 100-200)">
                         </div>
                         <div class="form-group flex-1">
                             <label for="awg-h3">H3</label>
-                            <input type="number" id="awg-h3" name="awg_h3" placeholder="Header 3">
+                            <input type="text" id="awg-h3" name="awg_h3" inputmode="numeric" placeholder="Header 3 (123 or 100-200)">
                         </div>
                         <div class="form-group flex-1">
                             <label for="awg-h4">H4</label>
-                            <input type="number" id="awg-h4" name="awg_h4" placeholder="Header 4">
+                            <input type="text" id="awg-h4" name="awg_h4" inputmode="numeric" placeholder="Header 4 (123 or 100-200)">
                         </div>
+                    </div>
+
+                    <details class="awg-signatures">
+                        <summary data-i18n="awg.signatures">Signature packets I1–I5 (AmneziaWG 1.5+)</summary>
+                        <div class="form-group"><label for="awg-i1">I1</label><input type="text" id="awg-i1" name="awg_i1" placeholder="&lt;b 0x…&gt;&lt;r 16&gt;"></div>
+                        <div class="form-group"><label for="awg-i2">I2</label><input type="text" id="awg-i2" name="awg_i2"></div>
+                        <div class="form-group"><label for="awg-i3">I3</label><input type="text" id="awg-i3" name="awg_i3"></div>
+                        <div class="form-group"><label for="awg-i4">I4</label><input type="text" id="awg-i4" name="awg_i4"></div>
+                        <div class="form-group"><label for="awg-i5">I5</label><input type="text" id="awg-i5" name="awg_i5"></div>
+                    </details>
+
+                    <details class="awg-signatures">
+                        <summary data-i18n="awg.v30">AmneziaWG 3.0: header protection and timings</summary>
+                        <div class="form-group"><label for="awg-header-protection-key">HeaderProtectionKey</label><input type="text" id="awg-header-protection-key" name="awg_header_protection_key" placeholder="Base64"></div>
+                        <div class="form-group"><label for="awg-content-padding-addition">ContentPaddingAddition</label><input type="text" id="awg-content-padding-addition" name="awg_content_padding_addition" placeholder="10-100"></div>
+                        <div class="form-group"><label for="awg-rekey-after-time">RekeyAfterTime</label><input type="text" id="awg-rekey-after-time" name="awg_rekey_after_time" placeholder="10-100"></div>
+                        <div class="form-group"><label for="awg-rekey-timeout">RekeyTimeout</label><input type="text" id="awg-rekey-timeout" name="awg_rekey_timeout" placeholder="10-100"></div>
+                        <div class="form-group"><label for="awg-reject-after-time">RejectAfterTime</label><input type="text" id="awg-reject-after-time" name="awg_reject_after_time" placeholder="10-100"></div>
+                        <div class="form-group"><label for="awg-keepalive-timeout">KeepaliveTimeout</label><input type="text" id="awg-keepalive-timeout" name="awg_keepalive_timeout" placeholder="10-100"></div>
+                        <div class="form-group"><label for="awg-max-handshake-attempts">MaxHandshakeAttempts</label><input type="text" id="awg-max-handshake-attempts" name="awg_max_handshake_attempts" placeholder="10-100"></div>
+                    </details>
+
+                    <div class="form-group">
+                        <label for="awg-keepalive">Persistent keepalive, <span data-i18n="awg.seconds">s</span></label>
+                        <input type="text" id="awg-keepalive" name="awg_keepalive" inputmode="numeric" data-i18n-placeholder="configModal.optional" placeholder="Optional">
                     </div>
                 </div>
                 

@@ -1096,7 +1096,7 @@ case "$REQUEST_METHOD" in
                         [ -n "$CURRENT_SERVERS" ] || CURRENT_SERVERS="[]"
                         PLAN=$(jq -c -n --argjson cur "$CURRENT_SERVERS" --argjson new "$SERVERS_JSON" '
                             def sorted: walk(if type == "object" then to_entries | sort_by(.key) | from_entries else . end);
-                            def norm: del(.id, .subscription_id, .created_at, .updated_at) | sorted | tojson;
+                            def norm: del(.id, .subscription_id, .created_at, .updated_at, .missing_since) | sorted | tojson;
                             # What makes it the same server. Some providers (FOLK, 26.09) hand out
                             # a different REALITY sni on every fetch; that must update the server,
                             # not replace it under a new id — a new id drops it out of the group.
@@ -1115,7 +1115,21 @@ case "$REQUEST_METHOD" in
                                 # only when the identity is unambiguous on both sides
                                 | (if ($ci | unique | length) == ($ci | length) and ($ni | unique | length) == ($ni | length)
                                    then [$cr[] | .i as $k | select($ni | index($k)) | {id: .id, s: ($nr[$ni | index($k)].s)}]
-                                   else [] end) as $upd
+                                   else [] end) as $upd1
+                                # Second pass: the same server under a new name (RESHU renumbers its
+                                # "ELITE (резерв) #N" on every fetch) — same protocol, address, port and
+                                # key, unambiguous on both sides → updated (renamed) under its old id,
+                                # not left "missing" for a day with a fresh copy beside it
+                                | ($upd1 | map(.id)) as $u1
+                                | ($upd1 | map(.s | ident)) as $u1s
+                                | [$cr[] | select(.id as $x | ($u1 | index($x)) == null) | . + {j: (.i | fromjson | .[1:] | tojson)}] as $cr2
+                                | [$nr[] | select(.i as $k | ($u1s | index($k)) == null) | . + {j: (.i | fromjson | .[1:] | tojson)}] as $nr2
+                                | ($cr2 | map(.j)) as $cj
+                                | ($nr2 | map(.j)) as $nj
+                                | [$cr2[] | .j as $k
+                                    | select(([$cj[] | select(. == $k)] | length) == 1 and ([$nj[] | select(. == $k)] | length) == 1)
+                                    | {id: .id, s: ($nr2[$nj | index($k)].s)}] as $upd2
+                                | ($upd1 + $upd2) as $upd
                                 | ($upd | map(.id)) as $uids
                                 | ($upd | map(.s | ident)) as $uis
                                 | {mode: "delta",
@@ -1123,6 +1137,14 @@ case "$REQUEST_METHOD" in
                                    update: $upd,
                                    delete: [$cr[] | select(.id as $x | ($uids | index($x)) == null) | .id],
                                    create: [$nr[] | select(.i as $k | ($uis | index($k)) == null) | .s]}
+                                # B28: a server that left while one new server with the same name
+                                # arrived (the provider moved it to another address, port or key) is
+                                # replaced at once, as before — only a server with no such stand-in
+                                # waits a day
+                                | ([$cr[] | select(.id as $x | ($uids | index($x)) == null) | {id, nm: (.i | fromjson | .[0])}]) as $dl
+                                | ([$nr[] | select(.i as $k | ($uis | index($k)) == null) | (.i | fromjson | .[0])]) as $cn
+                                | .replaced = [$dl[] | .nm as $m
+                                    | select(([$dl[] | select(.nm == $m)] | length) == 1 and ([$cn[] | select(. == $m)] | length) == 1) | .id]
                               end' 2>/dev/null)
                         if [ "$(printf '%s' "$PLAN" | jq -r '.mode // empty' 2>/dev/null)" = "delta" ]; then
                             KEEP_COUNT=$(printf '%s' "$PLAN" | jq -r '.keep | length' 2>/dev/null)
@@ -1145,17 +1167,59 @@ case "$REQUEST_METHOD" in
                                 fi
                                 UPD_COUNT=$((UPD_COUNT + 1))
                             done
+                            # A server that came back (same details) loses its "missing" mark
+                            for KEEP_ID in $(printf '%s' "$PLAN" | jq -r '.keep[]?' 2>/dev/null); do
+                                KEEP_FILE="$VPN_CONFIGS_DIR/${KEEP_ID}.json"
+                                jq -e 'has("missing_since")' "$KEEP_FILE" >/dev/null 2>&1 || continue
+                                jq -c 'del(.missing_since)' "$KEEP_FILE" > "$KEEP_FILE.tmp" 2>/dev/null && [ -s "$KEEP_FILE.tmp" ] \
+                                    && mv "$KEEP_FILE.tmp" "$KEEP_FILE" || rm -f "$KEEP_FILE.tmp"
+                                log_action "SUBSCRIPTION_MISSING" "Server $KEEP_ID is back in subscription $ACTION"
+                            done
+                            # B28: a server the provider stopped listing is not deleted at once — a
+                            # glitch on the provider side (half the list for one fetch) must not shrink
+                            # the group. It gets a "missing since" mark, keeps its id and keeps working;
+                            # only when it has been missing for MISSING_GRACE seconds, seen by at least
+                            # two fetches, is it really removed.
                             DEL_COUNT=0
+                            MISSING_COUNT=0
+                            GONE_IDS=""
+                            NOW_EPOCH=$(date +%s)
+                            REPLACED=" $(printf '%s' "$PLAN" | jq -r '.replaced[]?' 2>/dev/null | tr '\n' ' ') "
                             for DEL_ID in $(printf '%s' "$PLAN" | jq -r '.delete[]?' 2>/dev/null); do
-                                rm -f "$VPN_CONFIGS_DIR/${DEL_ID}.json"
+                                DEL_FILE="$VPN_CONFIGS_DIR/${DEL_ID}.json"
+                                case "$REPLACED" in
+                                    *" $DEL_ID "*)
+                                        # Same name came back under new details: gone now, the group
+                                        # and the active server follow it by name below
+                                        rm -f "$DEL_FILE"
+                                        DEL_COUNT=$((DEL_COUNT + 1))
+                                        [ "$DEL_ID" = "$ACTIVE_ID" ] && ACTIVE_GONE="yes"
+                                        continue
+                                        ;;
+                                esac
+                                SINCE=$(jq -r '.missing_since // empty' "$DEL_FILE" 2>/dev/null)
+                                if [ -z "$SINCE" ]; then
+                                    jq -c --argjson t "$NOW_EPOCH" '. + {missing_since: $t}' "$DEL_FILE" > "$DEL_FILE.tmp" 2>/dev/null && [ -s "$DEL_FILE.tmp" ] \
+                                        && mv "$DEL_FILE.tmp" "$DEL_FILE" || rm -f "$DEL_FILE.tmp"
+                                    MISSING_COUNT=$((MISSING_COUNT + 1))
+                                    log_action "SUBSCRIPTION_MISSING" "Server $DEL_ID ($(jq -r '.name // ""' "$DEL_FILE" 2>/dev/null)) not in subscription $ACTION, kept for now"
+                                    continue
+                                fi
+                                if [ $((NOW_EPOCH - SINCE)) -lt "$MISSING_GRACE" ]; then
+                                    MISSING_COUNT=$((MISSING_COUNT + 1))
+                                    continue
+                                fi
+                                server_notice_removed "$DEL_FILE" "$ACTION"
+                                rm -f "$DEL_FILE"
                                 DEL_COUNT=$((DEL_COUNT + 1))
+                                GONE_IDS="$GONE_IDS $DEL_ID"
                                 [ "$DEL_ID" = "$ACTIVE_ID" ] && ACTIVE_GONE="yes"
                             done
                             if [ "$CREATE_COUNT" -gt 0 ]; then
                                 SERVER_IDS=$(save_subscription_servers "$ACTION" "$CREATE_JSON")
                             fi
                             SKIP_REWRITE="yes"
-                            log_action "SUBSCRIPTION_DELTA" "ID: $ACTION, kept: $KEEP_COUNT, updated: $UPD_COUNT, removed: $DEL_COUNT, added: $CREATE_COUNT"
+                            log_action "SUBSCRIPTION_DELTA" "ID: $ACTION, kept: $KEEP_COUNT, updated: $UPD_COUNT, missing: $MISSING_COUNT, removed: $DEL_COUNT, added: $CREATE_COUNT"
                             # The active server only moves if its own file was one of the removed
                             [ "$ACTIVE_GONE" = "yes" ] || NEED_MIGRATION=""
                         fi
@@ -1173,16 +1237,38 @@ case "$REQUEST_METHOD" in
                         if [ "$NEED_MIGRATION" = "yes" ]; then
                             # Same server under a new id: repoint active-config, keep sing-box running
                             SAME_ID=$(find_same_server_config "$ACTIVE_JSON")
-                            if [ -n "$SAME_ID" ]; then
+                            SAME_NAME=""
+                            if [ -z "$SAME_ID" ]; then
+                                # The provider moved it (B28 "replaced"): the one new server of
+                                # this subscription with the same name takes over
+                                for f in "$VPN_CONFIGS_DIR"/*.json; do
+                                    [ -f "$f" ] || continue
+                                    jq -e --arg s "$ACTION" --arg n "$OLD_NAME" '.subscription_id == $s and .name == $n and (has("missing_since") | not)' "$f" >/dev/null 2>&1 \
+                                        && { SAME_NAME=$(basename "$f" .json); break; }
+                                done
+                            fi
+                            if [ -z "$SAME_ID" ] && [ -n "$SAME_NAME" ] && set_active_config "$SAME_NAME" \
+                               && apply_singbox_outbound "$VPN_CONFIGS_DIR/$SAME_NAME.json" "vpn"; then
+                                singbox_restart
+                                MIGRATED_TO="$SAME_NAME"
+                                log_action "SUBSCRIPTION_MIGRATION" "Active server moved by the provider: $ACTIVE_ID -> $SAME_NAME"
+                            elif [ -n "$SAME_ID" ]; then
                                 set_active_config "$SAME_ID"
                                 MIGRATED_TO="$SAME_ID"
                                 log_action "SUBSCRIPTION_MIGRATION" "Active server unchanged: $ACTIVE_ID -> $SAME_ID, no restart"
                             else
-                                MIGRATED_TO=$(migrate_with_check "$OLD_NAME" "$OLD_SERVER" "$OLD_PORT" "$ACTION")
-                                if [ -n "$MIGRATED_TO" ]; then
+                                # B28: the first server that really answers (tested aside, the
+                                # running VPN untouched), this subscription first — one restart only
+                                MIGRATED_TO=$(find_working_server "$ACTION")
+                                if [ -n "$MIGRATED_TO" ] && set_active_config "$MIGRATED_TO" \
+                                   && apply_singbox_outbound "$VPN_CONFIGS_DIR/$MIGRATED_TO.json" "vpn"; then
+                                    singbox_restart
+                                    server_notice_add primary "$(jq -c -n --arg o "$ACTIVE_ID" --arg n "$MIGRATED_TO" \
+                                        --arg nn "$(jq -r '.name // ""' "$VPN_CONFIGS_DIR/$MIGRATED_TO.json" 2>/dev/null)" '{old: $o, id: $n, name: $nn}')"
                                     log_action "SUBSCRIPTION_MIGRATION" "Active server migrated: $ACTIVE_ID -> $MIGRATED_TO"
                                 else
                                     log_action "SUBSCRIPTION_MIGRATION" "WARNING: No replacement found for $ACTIVE_ID, clearing active config"
+                                    server_notice_add empty '{"id":"","name":""}'
                                     rm -f "$ACTIVE_CONFIG"
                                 fi
                             fi

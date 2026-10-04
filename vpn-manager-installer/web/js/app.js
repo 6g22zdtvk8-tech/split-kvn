@@ -16,7 +16,7 @@
         // See: docs/amneziawg-research.md
         // Tested: 1.5.2, 1.5.3, custom build with v0.2.14-beta-awg-1.5-1
         // All versions have same H4 corruption issue
-        AMNEZIAWG_ENABLED: false,
+        AMNEZIAWG_ENABLED: true,
         DEFAULT_LANGUAGE: 'en'
     };
 
@@ -280,9 +280,19 @@
             'multi.lastCheck': 'Last check',
             'multi.never': 'not yet',
             'multi.empty': 'No servers selected. Tick servers in the list below.',
+            'notices.removed': 'Server “{name}” has been missing from its subscription for over a day and was removed.',
+            'notices.primary': 'The main server is gone; “{name}” is the main server now.',
+            'notices.empty': 'All servers of the group left their subscriptions. Switched to “{name}”, which answers.',
+            'notices.emptyNone': 'All servers left their subscriptions and no other server answered. Check your subscriptions.',
+            'notices.ok': 'Got it',
+            'notices.missing': 'not in subscription since {time}',
+            'notices.missingTitle': 'The provider no longer lists this server. It keeps working and is removed if it does not come back within a day.',
             'multi.statusMain': 'Main',
             'multi.statusReserve': 'Reserve',
             'multi.statusDown': 'Not responding',
+            'multi.errTimeout': 'No answer (timeout)',
+            'multi.errFailed': 'Check failed',
+            'multi.checkOne': 'Check this server now',
             'multi.statusUnknown': 'Not checked',
             'multi.carrying': 'Traffic',
             'multi.carryingTitle': 'Traffic goes through this server now',
@@ -932,6 +942,9 @@
             // AmneziaWG
             'awg.description': 'AmneziaWG — WireGuard modification with obfuscation for DPI bypass. Parameters Jc, Jmin, Jmax, S1, S2, H1-H4 must match the server.',
             'awg.localAddress': 'Local address',
+            'awg.signatures': 'Signature packets I1–I5 (AmneziaWG 1.5+)',
+            'awg.v30': 'AmneziaWG 3.0: header protection and timings',
+            'awg.seconds': 's',
             'awg.localAddressHint': 'Client IP address in the network',
             'awg.obfuscationParams': 'Obfuscation parameters',
             'awg.minJunk': 'Min junk',
@@ -1320,9 +1333,19 @@
             'multi.lastCheck': 'Последняя проверка',
             'multi.never': 'ещё не было',
             'multi.empty': 'Серверы не выбраны. Отметьте их в списке ниже.',
+            'notices.removed': 'Сервер «{name}» больше суток нет в подписке — удалён.',
+            'notices.primary': 'Главный сервер пропал, теперь главный — «{name}».',
+            'notices.empty': 'Все серверы группы пропали из подписок. Переключено на «{name}» — он отвечает.',
+            'notices.emptyNone': 'Все серверы пропали из подписок, и ни один другой не ответил. Проверьте подписки.',
+            'notices.ok': 'Понятно',
+            'notices.missing': 'нет в подписке с {time}',
+            'notices.missingTitle': 'Провайдер больше не отдаёт этот сервер. Он продолжает работать и будет удалён, если не вернётся за сутки.',
             'multi.statusMain': 'Главный',
             'multi.statusReserve': 'Запасной',
             'multi.statusDown': 'Не отвечает',
+            'multi.errTimeout': 'Нет ответа (таймаут)',
+            'multi.errFailed': 'Проверка не прошла',
+            'multi.checkOne': 'Проверить этот сервер сейчас',
             'multi.statusUnknown': 'Не проверен',
             'multi.carrying': 'Трафик',
             'multi.carryingTitle': 'Сейчас трафик идёт через этот сервер',
@@ -1833,6 +1856,9 @@
             // AmneziaWG
             'awg.description': 'AmneziaWG — модификация WireGuard с обфускацией для обхода DPI. Параметры Jc, Jmin, Jmax, S1, S2, H1-H4 должны совпадать с сервером.',
             'awg.localAddress': 'Локальный адрес',
+            'awg.signatures': 'Пакеты-подписи I1–I5 (AmneziaWG 1.5+)',
+            'awg.v30': 'AmneziaWG 3.0: защита заголовков и тайминги',
+            'awg.seconds': 'с',
             'awg.localAddressHint': 'IP-адрес клиента в сети',
             'awg.obfuscationParams': 'Параметры обфускации',
             'awg.minJunk': 'Мин. junk',
@@ -2188,8 +2214,11 @@
         },
         amneziawg: {
             name: 'AmneziaWG',
-            fields: ['awg_private_key', 'awg_peer_public_key', 'awg_local_address', 'awg_preshared_key', 'awg_mtu', 
-                     'awg_jc', 'awg_jmin', 'awg_jmax', 'awg_s1', 'awg_s2', 'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4']
+            fields: ['awg_private_key', 'awg_peer_public_key', 'awg_local_address', 'awg_preshared_key', 'awg_mtu', 'awg_keepalive',
+                     'awg_jc', 'awg_jmin', 'awg_jmax', 'awg_s1', 'awg_s2', 'awg_s3', 'awg_s4', 'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4',
+                     'awg_i1', 'awg_i2', 'awg_i3', 'awg_i4', 'awg_i5',
+                     'awg_header_protection_key', 'awg_content_padding_addition', 'awg_rekey_after_time', 'awg_rekey_timeout',
+                     'awg_reject_after_time', 'awg_keepalive_timeout', 'awg_max_handshake_attempts']
         },
         hysteria2: {
             name: 'Hysteria2',
@@ -3263,13 +3292,14 @@
                 $('#wg-private-key').value = config.private_key || '';
                 $('#wg-peer-public-key').value = config.peer_public_key || '';
                 $('#wg-local-address').value = config.local_address || '';
-                $('#wg-preshared-key').value = config.preshared_key || '';
+                $('#wg-preshared-key').value = config.pre_shared_key || config.preshared_key || '';
                 $('#wg-mtu').value = config.mtu || 1420;
             } else if (protocol === 'amneziawg') {
                 $('#awg-private-key').value = config.private_key || '';
                 $('#awg-peer-public-key').value = config.peer_public_key || '';
                 $('#awg-local-address').value = config.local_address || '';
-                $('#awg-preshared-key').value = config.preshared_key || '';
+                $('#awg-preshared-key').value = config.pre_shared_key || config.preshared_key || '';
+                $('#awg-keepalive').value = config.persistent_keepalive ?? '';
                 $('#awg-mtu').value = config.mtu || 1280;
                 // AmneziaWG obfuscation
                 $('#awg-jc').value = config.jc ?? '';
@@ -3277,6 +3307,10 @@
                 $('#awg-jmax').value = config.jmax ?? '';
                 $('#awg-s1').value = config.s1 ?? '';
                 $('#awg-s2').value = config.s2 ?? '';
+                $('#awg-s3').value = config.s3 ?? '';
+                $('#awg-s4').value = config.s4 ?? '';
+                ['i1', 'i2', 'i3', 'i4', 'i5'].forEach(k => { const el = $('#awg-' + k); if (el) el.value = config[k] || ''; });
+                AWG30_FIELDS.forEach(k => { const el = $('#awg-' + k.replace(/_/g, '-')); if (el) el.value = config[k] ?? ''; });
                 $('#awg-h1').value = config.h1 ?? '';
                 $('#awg-h2').value = config.h2 ?? '';
                 $('#awg-h3').value = config.h3 ?? '';
@@ -3344,33 +3378,28 @@
             data.private_key = formData.get('wg_private_key');
             data.peer_public_key = formData.get('wg_peer_public_key');
             data.local_address = formData.get('wg_local_address');
-            data.preshared_key = formData.get('wg_preshared_key') || '';
+            data.pre_shared_key = formData.get('wg_preshared_key') || '';
             data.mtu = parseInt(formData.get('wg_mtu')) || 1420;
         } else if (protocol === 'amneziawg') {
             data.private_key = formData.get('awg_private_key');
             data.peer_public_key = formData.get('awg_peer_public_key');
             data.local_address = formData.get('awg_local_address');
-            data.preshared_key = formData.get('awg_preshared_key') || '';
+            data.pre_shared_key = formData.get('awg_preshared_key') || '';
             data.mtu = parseInt(formData.get('awg_mtu')) || 1280;
-            // AmneziaWG obfuscation
-            const jc = formData.get('awg_jc');
-            const jmin = formData.get('awg_jmin');
-            const jmax = formData.get('awg_jmax');
-            const s1 = formData.get('awg_s1');
-            const s2 = formData.get('awg_s2');
-            const h1 = formData.get('awg_h1');
-            const h2 = formData.get('awg_h2');
-            const h3 = formData.get('awg_h3');
-            const h4 = formData.get('awg_h4');
-            if (jc) data.jc = parseInt(jc);
-            if (jmin) data.jmin = parseInt(jmin);
-            if (jmax) data.jmax = parseInt(jmax);
-            if (s1) data.s1 = parseInt(s1);
-            if (s2) data.s2 = parseInt(s2);
-            if (h1) data.h1 = parseInt(h1);
-            if (h2) data.h2 = parseInt(h2);
-            if (h3) data.h3 = parseInt(h3);
-            if (h4) data.h4 = parseInt(h4);
+            // Every field is sent, an emptied one as '' — the server then drops it instead of
+            // keeping the old value (editing merges into the stored config)
+            const keepalive = formData.get('awg_keepalive');
+            // a number, or a "from-to" range (AmneziaWG 3.0)
+            data.persistent_keepalive = keepalive ? (keepalive.includes('-') ? keepalive.trim() : parseInt(keepalive)) : '';
+            // AmneziaWG obfuscation: numbers for Jc/Jmin/Jmax/S1-S4; H1-H4 a number or a
+            // "from-to" range (AWG 2.0), kept as text; I1-I5 signature packets as text
+            ['jc', 'jmin', 'jmax', 's1', 's2', 's3', 's4'].forEach(k => {
+                const v = formData.get('awg_' + k);
+                data[k] = (v !== null && v !== '') ? parseInt(v) : '';
+            });
+            ['h1', 'h2', 'h3', 'h4', 'i1', 'i2', 'i3', 'i4', 'i5', ...AWG30_FIELDS].forEach(k => {
+                data[k] = (formData.get('awg_' + k) || '').trim();
+            });
         } else if (protocol === 'hysteria2') {
             data.password = formData.get('hy2_password');
             data.sni = formData.get('hy2_sni') || '';
@@ -3504,11 +3533,16 @@
     // failover tile is replaced by #multi-tile. Ticks are collected in a draft
     // and sent only by the Apply button (sing-box restarts, 2–3 s).
     const MULTI_POLL_MS = 20000;
-    const MULTI_BLOCKED_PROTOCOLS = ['wireguard', 'amneziawg'];
+    // AmneziaWG 3.0: header protection key and ranges (a number or "from-to"), kept as text
+    const AWG30_FIELDS = ['header_protection_key', 'content_padding_addition', 'rekey_after_time', 'rekey_timeout',
+                          'reject_after_time', 'keepalive_timeout', 'max_handshake_attempts'];
+
+    // WireGuard/AmneziaWG take part in the group as sing-box endpoints (B29)
+    const MULTI_BLOCKED_PROTOCOLS = [];
     const multiState = {
         available: false,   // multi.cgi answered at least once
         mode: 'single',
-        limit: 20,
+        limit: 32,
         primary: '',
         members: [],
         subscriptions: [],
@@ -3749,7 +3783,7 @@
         if (!data) return;
         multiState.available = true;
         multiState.mode = data.mode === 'multi' ? 'multi' : 'single';
-        multiState.limit = parseInt(data.limit, 10) || 20;
+        multiState.limit = parseInt(data.limit, 10) || 32;
         multiState.primary = data.primary ? String(data.primary) : '';
         multiState.members = Array.isArray(data.members) ? data.members.map(String) : [];
         multiState.subscriptions = Array.isArray(data.subscriptions) ? data.subscriptions.map(String) : [];
@@ -3757,6 +3791,7 @@
         multiState.truncated = parseInt(data.truncated, 10) || 0;
         multiState.running = !!data.running;
         multiState.lastCheck = data.last_check || null;
+        multiState.notices = Array.isArray(data.notices) ? data.notices : [];
         if (multiState.mode !== 'multi') multiState.draft = null;
         multiSettleDraft();
         scheduleMultiPoll();
@@ -3875,6 +3910,20 @@
         }
     }
     
+    async function multiCheckOne(id) {
+        if (multiState.checking || multiState.checkingId) return;
+        multiState.checkingId = String(id);
+        renderMultiUI();
+        try {
+            multiApplyState(await multiPost('/check-one', { id: String(id) }));
+        } catch (e) {
+            showToast(multiErrorText(e), 'error');
+        } finally {
+            multiState.checkingId = null;
+            renderMultiUI();
+        }
+    }
+
     async function multiCheckNow() {
         if (multiState.checking || multiState.applying) return;
         multiState.checking = true;
@@ -3952,7 +4001,8 @@
         else badge = `<span class="multi-badge reserve">${t('multi.statusReserve')}</span>`;
         
         let delay = pendingAdd ? '' : '—';
-        if (health === 'down') delay = t('multi.statusDown');
+        if (row.check_error) delay = t(row.check_error === 'timeout' ? 'multi.errTimeout' : 'multi.errFailed');
+        else if (health === 'down') delay = t('multi.statusDown');
         else if (live && row.delay != null) delay = `${row.delay} ${t('multi.ms')}`;
         else if (live && status === 'unknown') delay = t('multi.statusUnknown');
         
@@ -3969,6 +4019,14 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                </button>`;
         
+        // Check just this server now (sing-box forgets a server whose check failed,
+        // so "not checked" could hide "does not answer")
+        const checking = multiState.checkingId === id;
+        const checkBtn = pendingAdd ? '' : `<button class="btn btn-sm btn-icon multi-check-one" data-multi-check="${escapeHtml(id)}"
+                title="${escapeHtml(t('multi.checkOne'))}" ${checking || multiState.checking ? 'disabled' : ''}>
+                ${checking ? '<span class="btn-spinner"></span>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'}
+            </button>`;
+
         // One fixed column: "Traffic" in a frame where traffic goes now, otherwise the
         // "Make main" button (none on the main row) — so the delays line up below each other
         let slot = '<span class="multi-slot"></span>';
@@ -3986,16 +4044,44 @@
                     <div class="multi-row-name">${escapeHtml(row.name || id)}</div>
                     <div class="multi-row-sub">
                         ${protocol ? `<span class="config-protocol">${escapeHtml(protocol)}</span>` : ''}${sub ? escapeHtml(sub.name) : ''}
+                        ${row.missing_since ? `<span class="multi-missing" title="${escapeHtml(t('notices.missingTitle'))}">${t('notices.missing', { time: new Date(row.missing_since * 1000).toLocaleString(currentLanguage === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) })}</span>` : ''}
                     </div>
                 </div>
                 ${badge}
                 ${slot}
                 <span class="multi-delay ${health === 'down' ? 'down' : ''}">${delay}</span>
-                <div class="multi-row-actions">${removeBtn}</div>
+                <div class="multi-row-actions">${checkBtn}${removeBtn}</div>
             </div>`;
     }
     
+    // B28: what happened to servers that left their subscription
+    function renderServerNotices() {
+        const box = $('#server-notices');
+        if (!box) return;
+        const list = multiState.notices || [];
+        box.classList.toggle('hidden', !list.length);
+        if (!list.length) { box.innerHTML = ''; return; }
+        const when = ts => new Date(ts * 1000).toLocaleString(currentLanguage === 'ru' ? 'ru-RU' : 'en-GB',
+            { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const red = list.some(n => n.kind === 'empty');
+        box.classList.toggle('danger', red);
+        box.innerHTML = `
+            <ul>${list.map(n => {
+                const name = escapeHtml(n.name || n.id || '');
+                let text;
+                if (n.kind === 'removed') text = t('notices.removed', { name });
+                else if (n.kind === 'primary') text = t('notices.primary', { name });
+                else text = n.id ? t('notices.empty', { name }) : t('notices.emptyNone');
+                return `<li><span class="server-notice-time">${when(n.time)}</span> ${text}</li>`;
+            }).join('')}</ul>
+            <button class="btn btn-sm btn-secondary" id="server-notices-ok">${t('notices.ok')}</button>`;
+        $('#server-notices-ok')?.addEventListener('click', async () => {
+            try { multiApplyState(await multiPost('/notices')); } catch (e) { showToast(multiErrorText(e), 'error'); }
+        });
+    }
+
     function renderMultiUI() {
+        renderServerNotices();
         const sw = $('#multi-mode-switch');
         const tile = $('#multi-tile');
         const failoverTile = $('#failover-tile');
@@ -4054,6 +4140,8 @@
                 : `<div class="multi-empty">${t('multi.empty')}</div>`;
             list.querySelectorAll('[data-multi-primary]').forEach(b =>
                 b.addEventListener('click', () => multiSetPrimary(b.dataset.multiPrimary)));
+            list.querySelectorAll('[data-multi-check]').forEach(b =>
+                b.addEventListener('click', () => multiCheckOne(b.dataset.multiCheck)));
             list.querySelectorAll('[data-multi-remove]').forEach(b =>
                 b.addEventListener('click', () => multiToggleServer(b.dataset.multiRemove, false)));
             list.querySelectorAll('[data-multi-undo]').forEach(b =>
