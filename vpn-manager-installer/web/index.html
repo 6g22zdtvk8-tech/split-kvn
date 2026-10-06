@@ -1762,12 +1762,12 @@
                 <div class="form-group">
                     <label for="ssuser-type" data-i18n="server.userType">Connection type</label>
                     <select id="ssuser-type" name="type">
-                        <option value="xhttp" selected data-i18n="server.userTypeXhttp">TLS (xhttp)</option>
-                        <option value="tls" data-i18n="server.userTypeTls">TLS (WebSocket)</option>
+                        <option value="tls" selected data-i18n="server.userTypeTls">TLS (WebSocket)</option>
+                        <option value="xhttp" data-i18n="server.userTypeXhttp">TLS (xhttp)</option>
                         <option value="reality" data-i18n="server.userTypeReality">Reality</option>
                         <option value="ws" data-i18n="server.userTypeWs">Standard (WebSocket)</option>
                     </select>
-                    <span class="hint" data-i18n="server.userTypeHint">TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (xhttp) 8445, TLS (WebSocket) 8444, Reality 8443, standard 8388.</span>
+                    <span class="hint" data-i18n="server.userTypeHint">TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (WebSocket) 8444, TLS (xhttp) 8445, Reality 8443, standard 8388.</span>
                 </div>
                 
                 <div class="modal-footer">

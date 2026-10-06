@@ -541,7 +541,7 @@
             'server.userTypeReality': 'Reality',
             'server.userTypeTls': 'TLS (WebSocket)',
             'server.userTypeXhttp': 'TLS (xhttp)',
-            'server.userTypeHint': 'TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (xhttp) 8445, TLS (WebSocket) 8444, Reality 8443, standard 8388.',
+            'server.userTypeHint': 'TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (WebSocket) 8444, TLS (xhttp) 8445, Reality 8443, standard 8388.',
             'server.port': 'Server Port',
             'server.portLabel': 'VPN Server Port',
             'server.portHint': 'Valid values: 1024-65535. After changing port, all connected VPN clients will lose connection and need to reconnect with new port.',
@@ -1636,7 +1636,7 @@
             'server.userTypeReality': 'Reality',
             'server.userTypeTls': 'TLS (WebSocket)',
             'server.userTypeXhttp': 'TLS (xhttp)',
-            'server.userTypeHint': 'TLS и Reality — с шифрованием: Happ и другие клиенты на Xray принимают только их. У каждого типа свой порт: TLS (xhttp) 8445, TLS (WebSocket) 8444, Reality 8443, обычный 8388.',
+            'server.userTypeHint': 'TLS и Reality — с шифрованием: Happ и другие клиенты на Xray принимают только их. У каждого типа свой порт: TLS (WebSocket) 8444, TLS (xhttp) 8445, Reality 8443, обычный 8388.',
             'server.attention': 'Внимание',
             'server.dontAddToVpn': 'Не добавляйте {method} в VPN.',
             'server.ddnsInfo': 'Ссылки продолжат работать при смене IP.',
@@ -7229,7 +7229,7 @@
             ssUserForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const name = $('#ssuser-name').value.trim();
-                const type = ($('#ssuser-type') || {}).value || 'xhttp';
+                const type = ($('#ssuser-type') || {}).value || 'tls';
                 if (name) {
                     const submitBtn = ssUserForm.querySelector('button[type="submit"]');
                     if (submitBtn) {
