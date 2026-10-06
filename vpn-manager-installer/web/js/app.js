@@ -538,8 +538,10 @@
             'server.usernameHint': 'Latin letters, digits, - and _',
             'server.userType': 'Connection type',
             'server.userTypeWs': 'Standard (WebSocket)',
-            'server.userTypeReality': 'Reality (encrypted)',
-            'server.userTypeHint': 'Reality is for apps that refuse an unencrypted connection (Happ and other Xray clients). It uses its own port, 8443.',
+            'server.userTypeReality': 'Reality',
+            'server.userTypeTls': 'TLS (WebSocket)',
+            'server.userTypeXhttp': 'TLS (xhttp)',
+            'server.userTypeHint': 'TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (xhttp) 8445, TLS (WebSocket) 8444, Reality 8443, standard 8388.',
             'server.port': 'Server Port',
             'server.portLabel': 'VPN Server Port',
             'server.portHint': 'Valid values: 1024-65535. After changing port, all connected VPN clients will lose connection and need to reconnect with new port.',
@@ -1631,8 +1633,10 @@
             'server.usernameHint': 'Латинские буквы, цифры, - и _',
             'server.userType': 'Тип подключения',
             'server.userTypeWs': 'Обычный (WebSocket)',
-            'server.userTypeReality': 'Reality (с шифрованием)',
-            'server.userTypeHint': 'Reality — для приложений, которые не подключаются без шифрования (Happ и другие клиенты на Xray). Работает на своём порту, 8443.',
+            'server.userTypeReality': 'Reality',
+            'server.userTypeTls': 'TLS (WebSocket)',
+            'server.userTypeXhttp': 'TLS (xhttp)',
+            'server.userTypeHint': 'TLS и Reality — с шифрованием: Happ и другие клиенты на Xray принимают только их. У каждого типа свой порт: TLS (xhttp) 8445, TLS (WebSocket) 8444, Reality 8443, обычный 8388.',
             'server.attention': 'Внимание',
             'server.dontAddToVpn': 'Не добавляйте {method} в VPN.',
             'server.ddnsInfo': 'Ссылки продолжат работать при смене IP.',
@@ -7225,7 +7229,7 @@
             ssUserForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const name = $('#ssuser-name').value.trim();
-                const type = ($('#ssuser-type') || {}).value || 'ws';
+                const type = ($('#ssuser-type') || {}).value || 'xhttp';
                 if (name) {
                     const submitBtn = ssUserForm.querySelector('button[type="submit"]');
                     if (submitBtn) {
@@ -7781,7 +7785,7 @@
                 return `
                 <div class="user-card ${isSuspended ? 'suspended' : ''}" data-user="${user.name}">
                     <div class="user-header">
-                        <span class="user-name">${user.name}${user.type === 'reality' ? ' <span class="user-type-badge">Reality</span>' : ''}</span>
+                        <span class="user-name">${user.name}${({reality: 'Reality', tls: 'TLS', xhttp: 'xhttp'})[user.type] ? ` <span class="user-type-badge">${({reality: 'Reality', tls: 'TLS', xhttp: 'xhttp'})[user.type]}</span>` : ''}</span>
                         <div class="user-actions">
                             <button type="button" class="btn btn-sm ${isSuspended ? 'btn-success' : 'btn-secondary'} btn-suspend" onclick="VPNManager.toggleUserSuspend('${user.name}', ${!isSuspended})" title="${isSuspended ? t('server.activateBtn') : t('server.suspendBtn')}">
                                 ${isSuspended ? t('server.activateBtn') : t('server.suspendBtn')}

@@ -38,28 +38,29 @@ sync_vpnserver_users() {
     [ -f "$SINGBOX_CONFIG" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
 
-    # Reality users (B37) live in their own inbound, the rest in the WebSocket one
-    wanted=$(jq -c '[.users[]? | select(.suspended != true and (.type // "ws") != "reality") | {name, uuid}]' "$creds" 2>/dev/null)
-    wanted_r=$(jq -c '[.users[]? | select(.suspended != true and .type == "reality") | {name, uuid, flow: "xtls-rprx-vision"}]' "$creds" 2>/dev/null)
+    # Users of the B37 types (Reality, TLS, xhttp) live in their own inbounds, the rest
+    # in the WebSocket one. Only inbounds already in the config are synced: the panel
+    # creates and removes them.
+    wanted=$(jq -c '[.users[]? | select(.suspended != true and (.type // "ws") == "ws") | {name, uuid}]' "$creds" 2>/dev/null)
     # An empty or unreadable credentials file must never wipe the server's users.
     [ -n "$wanted" ] || return 0
     [ "$wanted" = "null" ] && return 0
-    [ "$wanted$wanted_r" = "[][]" ] && return 0
-
-    current=$(jq -c '[.inbounds[]? | select(.tag == "ss-server-in") | .users[]? | {name, uuid}]' \
-        "$SINGBOX_CONFIG" 2>/dev/null)
-    current_r=$(jq -c '[.inbounds[]? | select(.tag == "ss-server-reality-in") | .users[]? | {name, uuid, flow}]' \
-        "$SINGBOX_CONFIG" 2>/dev/null)
-    # no Reality inbound in the config: nothing to sync there (the panel creates it)
-    [ "$current_r" = "[]" ] && wanted_r="[]"
-    [ "$wanted" = "$current" ] && [ "$wanted_r" = "$current_r" ] && return 0
-    [ -n "$wanted_r" ] || wanted_r="[]"
+    [ "$(jq '.users | length' "$creds" 2>/dev/null)" = "0" ] && return 0
 
     tmp="/tmp/singbox-usersync.$$"
-    jq --argjson users "$wanted" --argjson users_r "$wanted_r" \
-        '(.inbounds[] | select(.tag == "ss-server-in")).users = $users
-         | (.inbounds[] | select(.tag == "ss-server-reality-in")).users = $users_r' \
+    jq --slurpfile c "$creds" '
+        [$c[0].users[]? | select(.suspended != true)] as $act
+        | def of($t): [$act[] | select((.type // "ws") == $t) | {name, uuid}];
+        {"ss-server-in": of("ws"),
+         "ss-server-reality-in": [of("reality")[] | . + {flow: "xtls-rprx-vision"}],
+         "ss-server-tls-in": of("tls"),
+         "ss-server-xhttp-in": of("xhttp")} as $want
+        | .inbounds = [.inbounds[] | if $want[.tag // ""] != null then .users = $want[.tag // ""] else . end]' \
         "$SINGBOX_CONFIG" > "$tmp" 2>/dev/null
+    if [ -s "$tmp" ] && [ "$(jq -S -c . "$tmp" 2>/dev/null)" = "$(jq -S -c . "$SINGBOX_CONFIG" 2>/dev/null)" ]; then
+        rm -f "$tmp"
+        return 0
+    fi
 
     if [ -s "$tmp" ]; then
         mv "$tmp" "$SINGBOX_CONFIG"

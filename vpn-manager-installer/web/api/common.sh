@@ -1341,7 +1341,7 @@ apply_singbox_vpn_items() {
            | .route.default_domain_resolver = "bootstrap"
            | .route.rules = (
                # Remove old rules for ss-server-in, health-check-in and ip_is_private, then re-add
-               [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["health-check-in"] and .ip_is_private != true)]
+               [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .inbound != ["health-check-in"] and .ip_is_private != true)]
                + (if $vpnclient_rules != [] then $vpnclient_rules else [] end)
                # Always force health-check-in through the active VPN outbound,
                # so the failover daemon can verify the actual tunnel health (not the ISP path).
@@ -2079,7 +2079,7 @@ vpn_lan_rebuild() {
 # A sing-box config with every B8 rule and outbound removed — the same as with access
 # off (install-singbox.sh does the same on a reinstall)
 vpn_lan_strip() {
-    jq -e '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"]) and .action == "reject")) | not)]
+    jq -e '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"] or .inbound == ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"]) and .action == "reject")) | not)]
            | .outbounds = [(.outbounds // [])[] | select((.tag // "") | startswith("direct-lan-") | not)]' "$1"
 }
 
@@ -2142,23 +2142,23 @@ vpn_lan_rules_json() {
     local segs=$(vpn_lan_segments)
     local to_panel='"action":"route","outbound":"direct-lan-lo","override_address":"127.0.0.1"'
     {
-        printf '{"inbound":["ss-server-in","ss-server-reality-in"],"domain":["%s"],"port":[%s],%s}\n' "$VPN_PANEL_NAME" "$port" "$to_panel"
-        printf '{"inbound":["ss-server-in","ss-server-reality-in"],"ip_cidr":["%s/32"],"port":[%s],%s}\n' "$VPN_PANEL_IP" "$port" "$to_panel"
+        printf '{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"domain":["%s"],"port":[%s],%s}\n' "$VPN_PANEL_NAME" "$port" "$to_panel"
+        printf '{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"ip_cidr":["%s/32"],"port":[%s],%s}\n' "$VPN_PANEL_IP" "$port" "$to_panel"
         # The router's own addresses, panel port
         echo "$segs" | awk 'NF {print $3 "/32"}' |
             jq -R -s -c --argjson port "$port" 'split("\n") | map(select(length > 0))
-                | if length > 0 then {inbound: ["ss-server-in","ss-server-reality-in"], ip_cidr: ., port: [$port], action: "route", outbound: "direct-lan-lo", override_address: "127.0.0.1"} else empty end'
+                | if length > 0 then {inbound: ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"], ip_cidr: ., port: [$port], action: "route", outbound: "direct-lan-lo", override_address: "127.0.0.1"} else empty end'
         if [ "$mode" = lan ]; then
             echo "$segs" | while read -r br net ip; do
                 [ -n "$br" ] || continue
-                printf '{"inbound":["ss-server-in","ss-server-reality-in"],"ip_cidr":["%s"],"outbound":"direct-lan-%s"}\n' "$net" "$br"
+                printf '{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"ip_cidr":["%s"],"outbound":"direct-lan-%s"}\n' "$net" "$br"
             done
         fi
         if [ "$mode" = panel ]; then
             echo "$segs" | awk 'NF {print $2}' |
-                jq -R -s -c 'split("\n") | map(select(length > 0)) + ["127.0.0.0/8"] | {inbound: ["ss-server-in","ss-server-reality-in"], ip_cidr: ., action: "reject"}'
+                jq -R -s -c 'split("\n") | map(select(length > 0)) + ["127.0.0.0/8"] | {inbound: ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"], ip_cidr: ., action: "reject"}'
         else
-            echo '{"inbound":["ss-server-in","ss-server-reality-in"],"ip_cidr":["127.0.0.0/8"],"action":"reject"}'
+            echo '{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"ip_cidr":["127.0.0.0/8"],"action":"reject"}'
         fi
     } | jq -s -c '.'
 }
@@ -2209,7 +2209,7 @@ generate_vpnclient_route_rules() {
             # All ss-server-in traffic -> direct (VPN not used)
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"direct\"
   }"
@@ -2219,7 +2219,7 @@ generate_vpnclient_route_rules() {
             # All ss-server-in traffic -> VPN
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2245,7 +2245,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"domain_suffix\": $domain_suffixes,
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2257,7 +2257,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"ip_cidr\": $ip_cidrs,
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2269,7 +2269,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"udp\"],
     \"domain_suffix\": $domain_suffixes_udp,
     \"outbound\": \"$vpn_tag\"
@@ -2282,7 +2282,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"udp\"],
     \"ip_cidr\": $ip_cidrs_udp,
     \"outbound\": \"$vpn_tag\"
@@ -2311,7 +2311,7 @@ generate_vpnclient_route_rules() {
                     if [ -n "$net" ]; then
                         rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"udp\"],
     \"$key\": $list,
     \"outbound\": \"direct\"
@@ -2319,7 +2319,7 @@ generate_vpnclient_route_rules() {
                     else
                         rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"$key\": $list,
     \"outbound\": \"direct\"
   }"
@@ -2332,7 +2332,7 @@ generate_vpnclient_route_rules() {
             [ $has_rules -eq 1 ] && rules="$rules,"
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\"],
+    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"$rest_out\"
   }"
@@ -2432,7 +2432,7 @@ update_vpnclient_rules() {
        | .outbounds = ([(.outbounds // [])[] | select((.tag // "") | startswith("direct-lan-") | not)] + $lan_outbounds)
        | .route.rules = (
            # Remove old rules for ss-server-in and ip_is_private, then re-add
-           [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .ip_is_private != true)]
+           [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .ip_is_private != true)]
            + (if $vpnclient_rules != [] then $vpnclient_rules else [] end)
            + [{"ip_is_private": true, "outbound": "direct"}]
          )

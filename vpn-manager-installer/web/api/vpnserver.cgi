@@ -22,6 +22,14 @@ VPN_SERVER_PORT=8388
 REALITY_TAG="ss-server-reality-in"
 REALITY_PORT=8443
 REALITY_SNI="www.apple.com"
+# B37: VLESS + TLS with our own certificate (made by sing-box for the router's DDNS
+# name; links carry its fingerprint, pcs=): over WebSocket and over xhttp
+TLS_WS_TAG="ss-server-tls-in"
+TLS_WS_PORT=8444
+XHTTP_TAG="ss-server-xhttp-in"
+XHTTP_PORT=8445
+XHTTP_PATH="/xh"
+TLS_DIR="/opt/etc/vpn-manager/tls"
 
 # Compatibility with old paths (migration)
 OLD_SS_CREDS="/opt/etc/vpn-manager/ssserver-credentials.json"
@@ -112,12 +120,12 @@ ensure_reality_creds() {
     return 1
 }
 
-# B37: the Reality port is reachable from outside the same way as the main one: if the
-# main port is forwarded, the Reality port is forwarded on the same interface
-reality_port_forward() {
-    local want="$1" rc main_port r_port iface line
+# B37: extra server ports are reachable from outside the same way as the main one: if
+# the main port is forwarded, the extra port is forwarded on the same interface
+# $1 = on|off, $2 = port
+server_port_forward() {
+    local want="$1" r_port="$2" rc main_port iface line
     main_port=$(jq -r '.server_port // 8388' "$VPN_SERVER_CREDS" 2>/dev/null)
-    r_port=$(jq -r ".reality.port // $REALITY_PORT" "$VPN_SERVER_CREDS" 2>/dev/null)
     rc=$(ndmc -c "show running-config" 2>/dev/null)
     line=$(echo "$rc" | grep -E "^ip static tcpudp [^ ]+ $r_port 127\.0\.0\.1 !$r_port\$" | head -1)
     if [ "$want" = "on" ]; then
@@ -126,14 +134,57 @@ reality_port_forward() {
         [ -n "$iface" ] || return 0
         ndmc -c "ip static tcpudp $iface $r_port 127.0.0.1 !$r_port" >/dev/null 2>&1
         ndmc -c "system configuration save" >/dev/null 2>&1
-        log_action "VPNSERVER_REALITY" "Port $r_port forwarded on $iface"
+        log_action "VPNSERVER_PORT" "Port $r_port forwarded on $iface"
     else
         [ -n "$line" ] || return 0
         # the firmware removes a forward only by its full form ("no <whole line>")
         ndmc -c "no $line" >/dev/null 2>&1
         ndmc -c "system configuration save" >/dev/null 2>&1
-        log_action "VPNSERVER_REALITY" "Port $r_port forward removed"
+        log_action "VPNSERVER_PORT" "Port $r_port forward removed"
     fi
+}
+
+# B37: our own TLS certificate for the router's DDNS name ($1), made once by sing-box
+# (10 years). Clients pin it by its SHA-256 (newer Xray refuses "allow insecure").
+ensure_tls_creds() {
+    local domain="$1" kp sha tmp
+    if jq -e '(.tls.cert_sha256 // "") != ""' "$VPN_SERVER_CREDS" >/dev/null 2>&1 \
+            && [ -s "$TLS_DIR/server.crt" ] && [ -s "$TLS_DIR/server.key" ]; then
+        return 0
+    fi
+    [ -n "$domain" ] || return 1
+    [ -x /opt/bin/sing-box ] || return 1
+    mkdir -p "$TLS_DIR" && chmod 700 "$TLS_DIR"
+    kp=$(/opt/bin/sing-box generate tls-keypair "$domain" -m 120 2>/dev/null)
+    echo "$kp" | sed -n '/BEGIN PRIVATE KEY/,/END PRIVATE KEY/p' > "$TLS_DIR/server.key"
+    echo "$kp" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$TLS_DIR/server.crt"
+    chmod 600 "$TLS_DIR/server.key"; chmod 644 "$TLS_DIR/server.crt"
+    [ -s "$TLS_DIR/server.key" ] && [ -s "$TLS_DIR/server.crt" ] || return 1
+    sha=$(grep -v -- '-----' "$TLS_DIR/server.crt" | tr -d '\r\n' | base64 -d 2>/dev/null | sha256sum | cut -d' ' -f1)
+    [ ${#sha} -eq 64 ] || return 1
+    tmp=$(mktemp)
+    jq --arg d "$domain" --arg h "$sha" --argjson wp "$TLS_WS_PORT" --argjson xp "$XHTTP_PORT" \
+        '.tls = {domain: $d, cert_sha256: $h, ws_port: $wp, xhttp_port: $xp}' "$VPN_SERVER_CREDS" > "$tmp"
+    if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
+        mv "$tmp" "$VPN_SERVER_CREDS"
+        chmod 600 "$VPN_SERVER_CREDS"
+        log_action "VPNSERVER_TLS" "TLS certificate created for $domain"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# port and inbound tag of an extra server type
+type_port() {
+    case "$1" in
+        reality) jq -r ".reality.port // $REALITY_PORT" "$VPN_SERVER_CREDS" 2>/dev/null ;;
+        tls)     jq -r ".tls.ws_port // $TLS_WS_PORT" "$VPN_SERVER_CREDS" 2>/dev/null ;;
+        xhttp)   jq -r ".tls.xhttp_port // $XHTTP_PORT" "$VPN_SERVER_CREDS" 2>/dev/null ;;
+    esac
+}
+type_tag() {
+    case "$1" in reality) echo "$REALITY_TAG" ;; tls) echo "$TLS_WS_TAG" ;; xhttp) echo "$XHTTP_TAG" ;; esac
 }
 
 setup_vless_credentials() {
@@ -388,6 +439,19 @@ generate_reality_url() {
     echo "vless://${uuid}@${server}:${port}?type=tcp&security=reality&pbk=${pbk}&sid=${sid}&sni=${sni}&fp=chrome&flow=xtls-rprx-vision#${encoded_name}"
 }
 
+# B37: VLESS + TLS (our certificate, pinned): WebSocket or xhttp
+# $1 uuid $2 server $3 port $4 kind(tls|xhttp) $5 sni $6 cert sha256 $7 name
+generate_tls_url() {
+    local uuid="$1" server="$2" port="$3" kind="$4" sni="$5" pcs="$6" name="$7"
+    local encoded_name=$(echo "$name" | sed 's/ /%20/g; s/@/%40/g')
+    if [ "$kind" = "xhttp" ]; then
+        local p=$(echo "$XHTTP_PATH" | sed 's|/|%2F|g')
+        echo "vless://${uuid}@${server}:${port}?type=xhttp&path=${p}&mode=auto&security=tls&sni=${sni}&fp=chrome&alpn=h2&pcs=${pcs}#${encoded_name}"
+    else
+        echo "vless://${uuid}@${server}:${port}?type=ws&path=%2Fvless-ws&security=tls&sni=${sni}&fp=chrome&alpn=http%2F1.1&pcs=${pcs}#${encoded_name}"
+    fi
+}
+
 get_server_config() {
     # Check migration
     migrate_from_shadowsocks
@@ -419,6 +483,10 @@ get_server_config() {
     local r_pbk=$(echo "$creds" | jq -r '.reality.public_key // empty')
     local r_sid=$(echo "$creds" | jq -r '.reality.short_id // empty')
     local r_sni=$(echo "$creds" | jq -r ".reality.sni // \"$REALITY_SNI\"")
+    local t_domain=$(echo "$creds" | jq -r '.tls.domain // empty')
+    local t_sha=$(echo "$creds" | jq -r '.tls.cert_sha256 // empty')
+    local t_wport=$(echo "$creds" | jq -r ".tls.ws_port // $TLS_WS_PORT")
+    local t_xport=$(echo "$creds" | jq -r ".tls.xhttp_port // $XHTTP_PORT")
     
     # IP for links
     local url_ip="$server_ip"
@@ -438,7 +506,14 @@ get_server_config() {
         local utype=$(echo "$user" | jq -r '.type // "ws"')
         
         local vless_url vless_url_ip=""
-        if [ "$utype" = "reality" ]; then
+        if [ "$utype" = "tls" ] || [ "$utype" = "xhttp" ]; then
+            local t_port="$t_wport"; [ "$utype" = "xhttp" ] && t_port="$t_xport"
+            # the name in the link is the certificate's; the IP link keeps it as SNI
+            vless_url=$(generate_tls_url "$uuid" "${t_domain:-$server_addr}" "$t_port" "$utype" "${t_domain:-$server_addr}" "$t_sha" "${name}@${t_domain:-$server_addr}")
+            if [ -n "$url_ip" ] && [ "$url_ip" != "${t_domain:-$server_addr}" ]; then
+                vless_url_ip=$(generate_tls_url "$uuid" "$url_ip" "$t_port" "$utype" "${t_domain:-$server_addr}" "$t_sha" "${name}@${url_ip}")
+            fi
+        elif [ "$utype" = "reality" ]; then
             vless_url=$(generate_reality_url "$uuid" "$server_addr" "$r_port" "$r_pbk" "$r_sid" "$r_sni" "${name}@${server_addr}")
             if [ -n "$url_ip" ] && [ "$url_ip" != "$server_addr" ]; then
                 vless_url_ip=$(generate_reality_url "$uuid" "$url_ip" "$r_port" "$r_pbk" "$r_sid" "$r_sni" "${name}@${url_ip}")
@@ -499,7 +574,7 @@ get_users() {
 add_user() {
     local name="$1"
     local utype="${2:-ws}"
-    case "$utype" in ws|reality) ;; *) json_error "Unknown connection type" 400; return ;; esac
+    case "$utype" in ws|reality|tls|xhttp) ;; *) json_error "Unknown connection type" 400; return ;; esac
     
     if [ -z "$name" ]; then
         json_error "errors.usernameRequired" 400
@@ -521,10 +596,17 @@ add_user() {
         json_error "Could not create Reality keys" 500
         return
     fi
-    # the first Reality user opens its port: refuse if something else holds it,
+    if [ "$utype" = "tls" ] || [ "$utype" = "xhttp" ]; then
+        local domain=$(get_external_address | jq -r '.address // empty')
+        if ! ensure_tls_creds "$domain"; then
+            json_error "Could not create the TLS certificate" 500
+            return
+        fi
+    fi
+    # the first user of a type opens its port: refuse if something else holds it,
     # otherwise sing-box fails to start and takes every connection down with it
-    if [ "$utype" = "reality" ] && ! jq -e --arg rt "$REALITY_TAG" '.inbounds[]? | select(.tag == $rt)' "$SINGBOX_CONFIG" >/dev/null 2>&1; then
-        local r_port=$(jq -r ".reality.port // $REALITY_PORT" "$VPN_SERVER_CREDS" 2>/dev/null)
+    if [ "$utype" != "ws" ] && ! jq -e --arg rt "$(type_tag "$utype")" '.inbounds[]? | select(.tag == $rt)' "$SINGBOX_CONFIG" >/dev/null 2>&1; then
+        local r_port=$(type_port "$utype")
         if ! check_port_available "$r_port"; then
             json_error "Port $r_port is already in use" 409
             return
@@ -534,10 +616,10 @@ add_user() {
     # Generate UUID
     local uuid=$(generate_uuid)
     
-    # Add user (type is stored only for Reality: plain users look as before)
+    # Add user (type is stored only for the new types: plain users look as before)
     local tmp_creds=$(mktemp)
     jq --arg n "$name" --arg u "$uuid" --arg t "$utype" \
-        '.users += [{name: $n, uuid: $u} + (if $t == "reality" then {type: "reality"} else {} end)]' \
+        '.users += [{name: $n, uuid: $u} + (if $t != "ws" and $t != "" then {type: $t} else {} end)]' \
         "$VPN_SERVER_CREDS" > "$tmp_creds"
     mv "$tmp_creds" "$VPN_SERVER_CREDS"
     chmod 600 "$VPN_SERVER_CREDS"
@@ -565,33 +647,58 @@ update_singbox_users() {
         return
     fi
     
-    local had_reality=$(jq -r --arg rt "$REALITY_TAG" '[.inbounds[]? | select(.tag == $rt)] | length' "$SINGBOX_CONFIG" 2>/dev/null)
+    local had=$(jq -r '[.inbounds[]?.tag] | join(" ")' "$SINGBOX_CONFIG" 2>/dev/null)
     
-    # Only active (non-suspended) users. Plain users go to the WebSocket inbound,
-    # Reality users (B37) to the Reality inbound, which exists only while it has users.
+    # Only active (non-suspended) users. Plain users go to the WebSocket inbound; the
+    # B37 types (Reality, TLS+WebSocket, TLS+xhttp) to their own inbounds, each of which
+    # exists only while it has users.
+    # without the certificate files a TLS inbound would keep sing-box from starting at all
+    local certok=false
+    [ -s "$TLS_DIR/server.crt" ] && [ -s "$TLS_DIR/server.key" ] && certok=true
     local tmp_config=$(mktemp)
-    jq --slurpfile c "$VPN_SERVER_CREDS" --arg rt "$REALITY_TAG" --argjson rport "$REALITY_PORT" --arg rsni "$REALITY_SNI" '
+    jq --slurpfile c "$VPN_SERVER_CREDS" \
+       --arg rt "$REALITY_TAG" --argjson rport "$REALITY_PORT" --arg rsni "$REALITY_SNI" \
+       --arg tt "$TLS_WS_TAG" --argjson tport "$TLS_WS_PORT" --arg xt "$XHTTP_TAG" --argjson xport "$XHTTP_PORT" \
+       --arg xpath "$XHTTP_PATH" --arg tdir "$TLS_DIR" --argjson certok "$certok" '
         $c[0] as $c
         | [$c.users[]? | select(.suspended != true)] as $act
+        | def of($t): [$act[] | select(.type == $t) | {name: .name, uuid: .uuid}];
+          def any_of($t): ([$c.users[]? | select(.type == $t)] | length) > 0;
+          ({enabled: true, server_name: ($c.tls.domain // ""),
+            certificate_path: ($tdir + "/server.crt"), key_path: ($tdir + "/server.key")}) as $tls
         | (.inbounds[] | select(.tag == "ss-server-in")).users =
-            [$act[] | select((.type // "ws") != "reality") | {name: .name, uuid: .uuid}]
-        | .inbounds = [.inbounds[] | select(.tag != $rt)]
-        | if ([$c.users[]? | select(.type == "reality")] | length) > 0 and ($c.reality.private_key // "") != "" then
+            [$act[] | select((.type // "ws") == "ws") | {name: .name, uuid: .uuid}]
+        | .inbounds = [.inbounds[] | select(.tag != $rt and .tag != $tt and .tag != $xt)]
+        | if any_of("reality") and ($c.reality.private_key // "") != "" then
             .inbounds += [{
                 type: "vless", tag: $rt, listen: "::", listen_port: ($c.reality.port // $rport),
-                users: [$act[] | select(.type == "reality") | {name: .name, uuid: .uuid, flow: "xtls-rprx-vision"}],
+                users: [of("reality")[] | . + {flow: "xtls-rprx-vision"}],
                 tls: {enabled: true, server_name: ($c.reality.sni // $rsni),
                       reality: {enabled: true,
                                 handshake: {server: ($c.reality.sni // $rsni), server_port: 443},
                                 private_key: $c.reality.private_key,
                                 short_id: [$c.reality.short_id]}}
             }]
-            # its clients are sniffed like the WebSocket ones, so rules by name work
-            | .route.rules = [(.route.rules // [])[]
-                | if .action == "sniff" and (.inbound | type) == "array"
-                     and (.inbound | any(. == "ss-server-in")) and (.inbound | any(. == $rt) | not)
-                  then .inbound += [$rt] else . end]
           else . end
+        | if any_of("tls") and ($c.tls.cert_sha256 // "") != "" and $certok then
+            .inbounds += [{
+                type: "vless", tag: $tt, listen: "::", listen_port: ($c.tls.ws_port // $tport),
+                users: of("tls"), tls: ($tls + {alpn: ["http/1.1"]}),
+                transport: {type: "ws", path: "/vless-ws"}
+            }]
+          else . end
+        | if any_of("xhttp") and ($c.tls.cert_sha256 // "") != "" and $certok then
+            .inbounds += [{
+                type: "vless", tag: $xt, listen: "::", listen_port: ($c.tls.xhttp_port // $xport),
+                users: of("xhttp"), tls: ($tls + {alpn: ["h2", "http/1.1"]}),
+                transport: {type: "xhttp", path: $xpath, mode: "auto", x_padding_bytes: "100-1000"}
+            }]
+          else . end
+        # their clients are sniffed like the WebSocket ones, so rules by name work
+        | [.inbounds[].tag | select(. == $rt or . == $tt or . == $xt)] as $extra
+        | .route.rules = [(.route.rules // [])[]
+            | if .action == "sniff" and (.inbound | type) == "array" and (.inbound | any(. == "ss-server-in"))
+              then .inbound = (.inbound + ($extra - .inbound)) else . end]
     ' "$SINGBOX_CONFIG" > "$tmp_config"
     
     if [ -s "$tmp_config" ] && jq empty "$tmp_config" 2>/dev/null; then
@@ -602,19 +709,25 @@ update_singbox_users() {
         return 1
     fi
     
-    # the Reality port follows its inbound in the router port forwarding
-    local has_reality=$(jq -r --arg rt "$REALITY_TAG" '[.inbounds[]? | select(.tag == $rt)] | length' "$SINGBOX_CONFIG" 2>/dev/null)
-    if [ "${has_reality:-0}" -gt 0 ]; then
-        # rules written before B37 name only the WebSocket inbound: rebuild them once,
-        # otherwise Reality clients skip the routing rules and all go to the VPN
-        if ! jq -e --arg rt "$REALITY_TAG" '[.route.rules[]? | select(.action != "sniff" and (.inbound | type) == "array" and (.inbound | any(. == $rt)))] | length > 0' \
+    local has=$(jq -r '[.inbounds[]?.tag] | join(" ")' "$SINGBOX_CONFIG" 2>/dev/null)
+    case " $has " in *" $REALITY_TAG "*|*" $TLS_WS_TAG "*|*" $XHTTP_TAG "*)
+        # rules written before these types name fewer inbounds: rebuild them once,
+        # otherwise their clients skip the routing rules and all go to the VPN
+        if ! jq -e --arg xt "$XHTTP_TAG" '[.route.rules[]? | select(.action != "sniff" and (.inbound | type) == "array" and (.inbound | any(. == $xt)))] | length > 0' \
                 "$SINGBOX_CONFIG" >/dev/null 2>&1; then
             update_vpnclient_rules >/dev/null 2>&1
         fi
-        reality_port_forward on
-    elif [ "${had_reality:-0}" -gt 0 ]; then
-        reality_port_forward off
-    fi
+        ;;
+    esac
+    # each extra port follows its inbound in the router port forwarding
+    local t tag
+    for t in reality tls xhttp; do
+        tag=$(type_tag "$t")
+        case " $has " in
+            *" $tag "*) server_port_forward on "$(type_port "$t")" ;;
+            *) case " $had " in *" $tag "*) server_port_forward off "$(type_port "$t")" ;; esac ;;
+        esac
+    done
     return 0
 }
 
@@ -800,12 +913,12 @@ export_users() {
     local users_json
     
     if [ -z "$names_csv" ]; then
-        users_json=$(jq '[.users[] | {name: .name, uuid: .uuid, suspended: (.suspended // false)} + (if .type == "reality" then {type: "reality"} else {} end)]' "$VPN_SERVER_CREDS")
+        users_json=$(jq '[.users[] | {name: .name, uuid: .uuid, suspended: (.suspended // false)} + (if (.type // "ws") != "ws" then {type: .type} else {} end)]' "$VPN_SERVER_CREDS")
     else
         # Build a JSON array of names from CSV, then filter the users array
         local names_arr=$(echo "$names_csv" | jq -R 'split(",") | map(select(length > 0))')
         users_json=$(jq --argjson names "$names_arr" \
-            '[.users[] | select(.name as $n | $names | index($n)) | {name: .name, uuid: .uuid, suspended: (.suspended // false)} + (if .type == "reality" then {type: "reality"} else {} end)]' \
+            '[.users[] | select(.name as $n | $names | index($n)) | {name: .name, uuid: .uuid, suspended: (.suspended // false)} + (if (.type // "ws") != "ws" then {type: .type} else {} end)]' \
             "$VPN_SERVER_CREDS")
     fi
     
@@ -870,7 +983,7 @@ import_users() {
         local uuid=$(echo "$payload" | jq -r ".users[$i].uuid // empty" 2>/dev/null)
         # no type in the file (exports before B37): an existing user keeps its own
         local utype=$(echo "$payload" | jq -r ".users[$i].type // empty" 2>/dev/null)
-        case "$utype" in reality|ws|'') ;; *) utype="ws" ;; esac
+        case "$utype" in reality|tls|xhttp|ws|'') ;; *) utype="ws" ;; esac
         i=$((i + 1))
         
         # Basic validation
@@ -895,7 +1008,7 @@ import_users() {
             if [ "$mode" = "overwrite" ]; then
                 local tmp2=$(mktemp)
                 jq --arg n "$name" --arg u "$uuid" --arg t "$utype" \
-                    '(.users[] | select(.name == $n)) |= (.uuid = $u | if $t == "reality" then .type = "reality" elif $t == "ws" then del(.type) else . end)' \
+                    '(.users[] | select(.name == $n)) |= (.uuid = $u | if $t == "ws" then del(.type) elif $t != "" then .type = $t else . end)' \
                     "$tmp_creds" > "$tmp2" && mv "$tmp2" "$tmp_creds"
                 overwritten=$((overwritten + 1))
             else
@@ -904,7 +1017,7 @@ import_users() {
         else
             local tmp2=$(mktemp)
             jq --arg n "$name" --arg u "$uuid" --arg t "$utype" \
-                '.users += [{name: $n, uuid: $u} + (if $t == "reality" then {type: "reality"} else {} end)]' \
+                '.users += [{name: $n, uuid: $u} + (if $t != "ws" and $t != "" then {type: $t} else {} end)]' \
                 "$tmp_creds" > "$tmp2" && mv "$tmp2" "$tmp_creds"
             added=$((added + 1))
             # Track this name as existing for subsequent iterations
@@ -921,6 +1034,8 @@ import_users() {
     mv "$tmp_creds" "$VPN_SERVER_CREDS"
     chmod 600 "$VPN_SERVER_CREDS"
     jq -e '[.users[]? | select(.type == "reality")] | length > 0' "$VPN_SERVER_CREDS" >/dev/null 2>&1 && ensure_reality_creds
+    jq -e '[.users[]? | select(.type == "tls" or .type == "xhttp")] | length > 0' "$VPN_SERVER_CREDS" >/dev/null 2>&1 \
+        && ensure_tls_creds "$(get_external_address | jq -r '.address // empty')"
     
     # Push to sing-box and restart (synchronous so client retry works immediately)
     update_singbox_users
