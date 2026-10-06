@@ -536,6 +536,10 @@
             'server.description': 'VPN Server allows external connections to the router. Client traffic is routed by the same rules as local devices. To connect from the internet, you need to open port. For advanced port forwarding, use the router web interface.',
             'server.credentials': 'Connection Credentials',
             'server.usernameHint': 'Latin letters, digits, - and _',
+            'server.userType': 'Connection type',
+            'server.userTypeWs': 'Standard (WebSocket)',
+            'server.userTypeReality': 'Reality (encrypted)',
+            'server.userTypeHint': 'Reality is for apps that refuse an unencrypted connection (Happ and other Xray clients). It uses its own port, 8443.',
             'server.port': 'Server Port',
             'server.portLabel': 'VPN Server Port',
             'server.portHint': 'Valid values: 1024-65535. After changing port, all connected VPN clients will lose connection and need to reconnect with new port.',
@@ -1625,6 +1629,10 @@
             'server.description': 'VPN-сервер позволяет подключаться к роутеру извне. Трафик клиентов маршрутизируется по тем же правилам, что и локальных устройств. Для подключения из интернета необходимо открыть порт 8388. Для расширенного управления переадресацией портов используйте веб-интерфейс роутера.',
             'server.credentials': 'Данные для подключения',
             'server.usernameHint': 'Латинские буквы, цифры, - и _',
+            'server.userType': 'Тип подключения',
+            'server.userTypeWs': 'Обычный (WebSocket)',
+            'server.userTypeReality': 'Reality (с шифрованием)',
+            'server.userTypeHint': 'Reality — для приложений, которые не подключаются без шифрования (Happ и другие клиенты на Xray). Работает на своём порту, 8443.',
             'server.attention': 'Внимание',
             'server.dontAddToVpn': 'Не добавляйте {method} в VPN.',
             'server.ddnsInfo': 'Ссылки продолжат работать при смене IP.',
@@ -7217,6 +7225,7 @@
             ssUserForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const name = $('#ssuser-name').value.trim();
+                const type = ($('#ssuser-type') || {}).value || 'ws';
                 if (name) {
                     const submitBtn = ssUserForm.querySelector('button[type="submit"]');
                     if (submitBtn) {
@@ -7224,7 +7233,7 @@
                         submitBtn.textContent = '...';
                     }
                     try {
-                        await addSSUser(name);
+                        await addSSUser(name, type);
                     } finally {
                         if (submitBtn) {
                             submitBtn.disabled = false;
@@ -7772,7 +7781,7 @@
                 return `
                 <div class="user-card ${isSuspended ? 'suspended' : ''}" data-user="${user.name}">
                     <div class="user-header">
-                        <span class="user-name">${user.name}</span>
+                        <span class="user-name">${user.name}${user.type === 'reality' ? ' <span class="user-type-badge">Reality</span>' : ''}</span>
                         <div class="user-actions">
                             <button type="button" class="btn btn-sm ${isSuspended ? 'btn-success' : 'btn-secondary'} btn-suspend" onclick="VPNManager.toggleUserSuspend('${user.name}', ${!isSuspended})" title="${isSuspended ? t('server.activateBtn') : t('server.suspendBtn')}">
                                 ${isSuspended ? t('server.activateBtn') : t('server.suspendBtn')}
@@ -7984,13 +7993,13 @@
         }
     }
     
-    async function addSSUser(name) {
+    async function addSSUser(name, type = 'ws') {
         try {
-            console.log('Adding user:', name);
+            console.log('Adding user:', name, type);
             const response = await fetch(`${CONFIG.API_BASE}/vpnserver.cgi/users`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name, type })
             });
             const data = await response.json();
             console.log('Add user response:', data);

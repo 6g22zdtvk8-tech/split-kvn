@@ -1759,6 +1759,14 @@
                            placeholder="user1">
                     <span class="hint" data-i18n="server.usernameHint">Latin letters, digits, - and _</span>
                 </div>
+                <div class="form-group">
+                    <label for="ssuser-type" data-i18n="server.userType">Connection type</label>
+                    <select id="ssuser-type" name="type">
+                        <option value="ws" data-i18n="server.userTypeWs">Standard (WebSocket)</option>
+                        <option value="reality" data-i18n="server.userTypeReality">Reality (encrypted)</option>
+                    </select>
+                    <span class="hint" data-i18n="server.userTypeHint">Reality is for apps that refuse an unencrypted connection (Happ and other Xray clients). It uses its own port, 8443.</span>
+                </div>
                 
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-close data-i18n="modal.cancel">Cancel</button>

@@ -38,19 +38,27 @@ sync_vpnserver_users() {
     [ -f "$SINGBOX_CONFIG" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
 
-    wanted=$(jq -c '[.users[]? | select(.suspended != true) | {name, uuid}]' "$creds" 2>/dev/null)
+    # Reality users (B37) live in their own inbound, the rest in the WebSocket one
+    wanted=$(jq -c '[.users[]? | select(.suspended != true and (.type // "ws") != "reality") | {name, uuid}]' "$creds" 2>/dev/null)
+    wanted_r=$(jq -c '[.users[]? | select(.suspended != true and .type == "reality") | {name, uuid, flow: "xtls-rprx-vision"}]' "$creds" 2>/dev/null)
     # An empty or unreadable credentials file must never wipe the server's users.
     [ -n "$wanted" ] || return 0
-    [ "$wanted" = "[]" ] && return 0
     [ "$wanted" = "null" ] && return 0
+    [ "$wanted$wanted_r" = "[][]" ] && return 0
 
     current=$(jq -c '[.inbounds[]? | select(.tag == "ss-server-in") | .users[]? | {name, uuid}]' \
         "$SINGBOX_CONFIG" 2>/dev/null)
-    [ "$wanted" = "$current" ] && return 0
+    current_r=$(jq -c '[.inbounds[]? | select(.tag == "ss-server-reality-in") | .users[]? | {name, uuid, flow}]' \
+        "$SINGBOX_CONFIG" 2>/dev/null)
+    # no Reality inbound in the config: nothing to sync there (the panel creates it)
+    [ "$current_r" = "[]" ] && wanted_r="[]"
+    [ "$wanted" = "$current" ] && [ "$wanted_r" = "$current_r" ] && return 0
+    [ -n "$wanted_r" ] || wanted_r="[]"
 
     tmp="/tmp/singbox-usersync.$$"
-    jq --argjson users "$wanted" \
-        '(.inbounds[] | select(.tag == "ss-server-in")).users = $users' \
+    jq --argjson users "$wanted" --argjson users_r "$wanted_r" \
+        '(.inbounds[] | select(.tag == "ss-server-in")).users = $users
+         | (.inbounds[] | select(.tag == "ss-server-reality-in")).users = $users_r' \
         "$SINGBOX_CONFIG" > "$tmp" 2>/dev/null
 
     if [ -s "$tmp" ]; then
