@@ -1051,7 +1051,11 @@ generate_outbound_json() {
             # (examples/amnezia/client.json). Any AWG version: Jc/Jmin/Jmax, S1-S4 numbers,
             # H1-H4 a number or a "from-to" range (kept as strings), I1-I5 signature packets.
             # Zero means "off" and is left out, as sing-box does itself.
-            jq -c --arg tag "$tag" '
+            # Split-KVN's own sing-box build carries the wireguard-go fix (version "-skvn"):
+            # there the padding is used in full; the stock engine still gets the cap below
+            local padfix=false
+            /opt/bin/sing-box version 2>/dev/null | head -1 | grep -q -- '-skvn' && padfix=true
+            jq -c --arg tag "$tag" --argjson padfix "$padfix" '
                 def num: if type == "string" then tonumber else . end;
                 {type: "wireguard", tag: $tag,
                  address: ((.local_address // "") | split(",") | map(select(length > 0))),
@@ -1074,8 +1078,8 @@ generate_outbound_json() {
                 # larger ContentPaddingAddition overruns it and sing-box panics (send.go:879,
                 # "slice bounds out of range … capacity 128"; test router 29.09). Until the fork
                 # is fixed the upper bound is capped at 16 — the padding is our own random
-                # addition, the server does not check its size.
-                | if (.amnezia.content_padding_addition // "") != "" then
+                # addition, the server does not check its size. Not with our own build.
+                | if (.amnezia.content_padding_addition // "") != "" and ($padfix | not) then
                     .amnezia.content_padding_addition |= (split("-") | map(tonumber) as $r
                       | ([$r[-1], 16] | min) as $hi | ([$r[0], $hi] | min) as $lo
                       | if $lo == $hi then ($hi | tostring) else "\($lo)-\($hi)" end)

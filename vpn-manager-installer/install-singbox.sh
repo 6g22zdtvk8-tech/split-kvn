@@ -175,7 +175,16 @@ schedule_ndmc_postinstall() {
 # =============================================================================
 # Version sing-box for download
 # =============================================================================
-SINGBOX_VERSION="1.14.1-extended-2.7.2"
+SINGBOX_VERSION="1.14.1-extended-2.7.2-skvn1"
+# Our build of sing-box-extended: the upstream release plus the wireguard-go fix for
+# AmneziaWG 3.0 content padding (sing-box-extended #158), built by GitHub Actions in
+# the fork. Back to the upstream releases once the author takes the fix.
+SINGBOX_RELEASES="https://github.com/6g22zdtvk8-tech/sing-box-extended/releases/download"
+# SHA-256 of each archive; an archive that does not match is not installed
+SINGBOX_SHA256_linux_arm64="2403a4e28b85d0317965de93ca5667f6bc582a600e7065cd5d8344986006cdd6"
+SINGBOX_SHA256_linux_mipsle_softfloat="cc62839cd3c90d913fe9f3163cb9c663b9f61daf9aabaa13c9ec8d3e2279a583"
+SINGBOX_SHA256_linux_mips_softfloat="67f9638052e874997ce6c319f6474cf669eeb720ec6f3b88bdb23613420311de"
+SINGBOX_SHA256_linux_amd64="a95639b9cc874434b6d720d01f614841ed5beaca97fcf521e23002099927ca14"
 # B2: where routers look for new releases (the manifest of the latest GitHub release)
 DEFAULT_UPDATE_SOURCE="https://github.com/6g22zdtvk8-tech/split-kvn/releases/latest/download/manifest.json"
 
@@ -269,13 +278,25 @@ install_singbox_binary() {
         cp "$local_archive" sing-box.tar.gz
     else
         # Skachivaem with GitHub
-        local download_url="https://github.com/shtorm-7/sing-box-extended/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-${singbox_arch}.tar.gz"
+        local download_url="${SINGBOX_RELEASES}/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-${singbox_arch}.tar.gz"
         log_info "Skachivanie: $download_url"
-        if ! curl -L -o sing-box.tar.gz "$download_url" 2>/dev/null; then
+        if ! curl -fL -o sing-box.tar.gz "$download_url" 2>/dev/null; then
             log_error "Failed to download sing-box"
             rm -rf "$tmp_dir"
             return 1
         fi
+    fi
+    
+    # the archive must be exactly the one we built
+    local want_sha=$(eval echo "\${SINGBOX_SHA256_$(echo "$singbox_arch" | tr '-' '_')}")
+    if [ -n "$want_sha" ]; then
+        local got_sha=$(sha256sum sing-box.tar.gz 2>/dev/null | awk '{print $1}')
+        if [ "$got_sha" != "$want_sha" ]; then
+            log_error "sing-box archive checksum mismatch — not installed, the old one stays"
+            cd /opt; rm -rf "$tmp_dir"
+            return 1
+        fi
+        log_ok "sing-box archive checksum OK"
     fi
     
     log_info "Extracting..."
@@ -299,20 +320,32 @@ install_singbox_binary() {
         return 1
     fi
     
+    # the new binary must run on this router and be the expected version before it
+    # replaces the working one
+    chmod +x "$binary"
+    local new_ver=$("$binary" version 2>/dev/null | head -1 | awk '{print $3}')
+    if [ "$new_ver" != "$SINGBOX_VERSION" ]; then
+        log_error "new sing-box does not run here (got '${new_ver}') — the old one stays"
+        cd /opt; rm -rf "$tmp_dir"
+        return 1
+    fi
+    
     # Stop sing-box if running
     [ -f /opt/etc/init.d/S99sing-box ] && /opt/etc/init.d/S99sing-box stop 2>/dev/null || true
     
-    # Ustanavlivaem
-    chmod +x "$binary"
+    # Ustanavlivaem (the old binary is kept until the new one answers)
+    [ -f /opt/bin/sing-box ] && cp -f /opt/bin/sing-box /opt/bin/sing-box.prev
     cp -f "$binary" /opt/bin/sing-box
     
     # Check
     if /opt/bin/sing-box version >/dev/null 2>&1; then
+        rm -f /opt/bin/sing-box.prev
         log_ok "sing-box $SINGBOX_VERSION installed"
         # Regenerate Reality keys if they were deferred
         regenerate_reality_keys_if_needed
     else
         log_error "sing-box does not work"
+        [ -f /opt/bin/sing-box.prev ] && mv -f /opt/bin/sing-box.prev /opt/bin/sing-box && log_warn "old sing-box put back"
         rm -rf "$tmp_dir"
         return 1
     fi
