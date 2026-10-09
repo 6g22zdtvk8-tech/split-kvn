@@ -108,7 +108,7 @@ ensure_reality_creds() {
     [ -n "$priv" ] && [ -n "$pub" ] && [ -n "$sid" ] || return 1
     tmp=$(mktemp)
     jq --arg priv "$priv" --arg pub "$pub" --arg sid "$sid" --arg sni "$REALITY_SNI" --argjson port "$REALITY_PORT" \
-        '.reality = {port: $port, sni: $sni, private_key: $priv, public_key: $pub, short_id: $sid}' \
+        '.reality = {port: (.reality.port // $port), sni: $sni, private_key: $priv, public_key: $pub, short_id: $sid}' \
         "$VPN_SERVER_CREDS" > "$tmp"
     if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
         mv "$tmp" "$VPN_SERVER_CREDS"
@@ -164,7 +164,7 @@ ensure_tls_creds() {
     [ ${#sha} -eq 64 ] || return 1
     tmp=$(mktemp)
     jq --arg d "$domain" --arg h "$sha" --argjson wp "$TLS_WS_PORT" --argjson xp "$XHTTP_PORT" \
-        '.tls = {domain: $d, cert_sha256: $h, ws_port: $wp, xhttp_port: $xp}' "$VPN_SERVER_CREDS" > "$tmp"
+        '.tls = {domain: $d, cert_sha256: $h, ws_port: (.tls.ws_port // $wp), xhttp_port: (.tls.xhttp_port // $xp)}' "$VPN_SERVER_CREDS" > "$tmp"
     if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
         mv "$tmp" "$VPN_SERVER_CREDS"
         chmod 600 "$VPN_SERVER_CREDS"
@@ -1112,71 +1112,97 @@ check_port_available() {
     return 0
 }
 
+# B38: move a port forward of the router from one port to another on the same
+# interface (the firmware removes a forward only by its full line)
+move_port_forward() {
+    local old="$1" new="$2" rc line iface
+    rc=$(ndmc -c "show running-config" 2>/dev/null)
+    line=$(echo "$rc" | grep -E "^ip static tcpudp [^ ]+ $old 127\.0\.0\.1 !$old\$" | head -1)
+    [ -n "$line" ] || return 1
+    iface=$(echo "$line" | awk '{print $4}')
+    ndmc -c "no $line" >/dev/null 2>&1
+    ndmc -c "ip static tcpudp $iface $new 127.0.0.1 !$new" >/dev/null 2>&1
+    ndmc -c "system configuration save" >/dev/null 2>&1
+    log_action "VPNSERVER_PORT" "Forward moved from $old to $new on $iface"
+    return 0
+}
+
+# B38: the port of one server type. $1 = new port, $2 = ws (main, default) | reality | tls | xhttp
 change_server_port() {
-    local new_port="$1"
+    local new_port="$1" utype="${2:-ws}" field old_port t p
+    case "$utype" in
+        ws) field=".server_port" ;;
+        reality) field=".reality.port" ;;
+        tls) field=".tls.ws_port" ;;
+        xhttp) field=".tls.xhttp_port" ;;
+        *) json_error "Unknown connection type" 400; return ;;
+    esac
     
-    # Validation
     if [ -z "$new_port" ]; then
         json_error "Port not specified" 400
         return
     fi
-    
-    # Check that it's a number
     if ! echo "$new_port" | grep -qE '^[0-9]+$'; then
         json_error "Port must be a number" 400
         return
     fi
-    
-    # Check range
     if [ "$new_port" -lt 1024 ] || [ "$new_port" -gt 65535 ]; then
         json_error "Port must be in range 1024-65535" 400
         return
     fi
-    
-    # Get current port from credentials
     if [ ! -f "$VPN_SERVER_CREDS" ]; then
         json_error "VPN server not configured" 500
         return
     fi
     
-    local old_port=$(jq -r '.server_port // empty' "$VPN_SERVER_CREDS")
-    if [ -z "$old_port" ]; then
-        old_port="$VPN_SERVER_PORT"
+    if [ "$utype" = "ws" ]; then
+        old_port=$(jq -r '.server_port // empty' "$VPN_SERVER_CREDS")
+        [ -n "$old_port" ] || old_port="$VPN_SERVER_PORT"
+    else
+        old_port=$(type_port "$utype")
     fi
-    
-    # If port hasn't changed
     if [ "$new_port" = "$old_port" ]; then
         json_success "{\"message\":\"Port unchanged\",\"port\":$new_port}"
         return
     fi
-    
-    # Check if new port is available (except if it's the current port)
-    if ! check_port_available "$new_port"; then
+    # not the port of another server type, nor the panel's
+    for t in ws reality tls xhttp; do
+        [ "$t" = "$utype" ] && continue
+        if [ "$t" = "ws" ]; then p=$(jq -r '.server_port // 8388' "$VPN_SERVER_CREDS"); else p=$(type_port "$t"); fi
+        if [ "$p" = "$new_port" ]; then
+            json_error "Port $new_port is used by another VPN-server type" 409
+            return
+        fi
+    done
+    # nor a device-policy port (B36)
+    if command -v device_policy_ports_json >/dev/null 2>&1 \
+            && device_policy_ports_json | jq -e --argjson p "$new_port" '[.[]] | index($p) != null' >/dev/null 2>&1; then
+        json_error "Port $new_port is used by a device policy" 409
+        return
+    fi
+    if [ "$new_port" = "$(panel_port)" ] || ! check_port_available "$new_port"; then
         json_error "Port $new_port is already in use" 409
         return
     fi
     
-    # Check if old port was opened in Keenetic
-    local old_port_was_open="false"
-    local port_config=$(ndmc -c "show running-config" 2>/dev/null)
-    if echo "$port_config" | grep -q "ip static.*$old_port"; then
-        old_port_was_open="true"
-    fi
+    # everything is saved first so a failed start can be undone
+    local creds_prev="/tmp/vpnserver-creds.prev.$$" cfg_prev="/tmp/vpnserver-cfg.prev.$$"
+    cp "$VPN_SERVER_CREDS" "$creds_prev"
+    cp "$SINGBOX_CONFIG" "$cfg_prev" 2>/dev/null
     
-    # Update vpnserver-credentials.json
     local tmp_creds=$(mktemp)
-    jq ".server_port = $new_port" "$VPN_SERVER_CREDS" > "$tmp_creds"
+    jq "$field = $new_port" "$VPN_SERVER_CREDS" > "$tmp_creds"
     if [ -s "$tmp_creds" ] && jq empty "$tmp_creds" 2>/dev/null; then
         mv "$tmp_creds" "$VPN_SERVER_CREDS"
         chmod 600 "$VPN_SERVER_CREDS"
     else
-        rm -f "$tmp_creds"
+        rm -f "$tmp_creds" "$creds_prev" "$cfg_prev"
         json_error "Failed to update credentials" 500
         return
     fi
     
-    # Update sing-box config (find ss-server-in inbound and update listen_port)
-    if [ -f "$SINGBOX_CONFIG" ]; then
+    # the sing-box inbound of this type (only if it exists: extra types appear with their first user)
+    if [ "$utype" = "ws" ]; then
         local tmp_config=$(mktemp)
         jq "(.inbounds[] | select(.tag == \"ss-server-in\")).listen_port = $new_port" "$SINGBOX_CONFIG" > "$tmp_config"
         if [ -s "$tmp_config" ] && jq empty "$tmp_config" 2>/dev/null; then
@@ -1184,35 +1210,37 @@ change_server_port() {
             chmod 644 "$SINGBOX_CONFIG"
         else
             rm -f "$tmp_config"
-            json_error "Failed to update sing-box config" 500
-            return
         fi
+    else
+        update_singbox_users
     fi
     
-    # Update port forwarding if old port was open
-    if [ "$old_port_was_open" = "true" ]; then
-        # Close old port
-        ndmc -c "no ip static tcpudp ISP $old_port" >/dev/null 2>&1
-        
-        # Open new port
-        ndmc -c "ip static tcpudp ISP $new_port 127.0.0.1 !$new_port" >/dev/null 2>&1
-        
-        # Save configuration
-        ndmc -c "system configuration save" >/dev/null 2>&1
-    fi
+    # the router's port forward follows the port (only if the old one was forwarded)
+    local forwarded=false
+    move_port_forward "$old_port" "$new_port" && forwarded=true
     
-    # Restart sing-box
-    if [ -f "$SINGBOX_INIT" ]; then
+    # a type without users has no inbound yet: nothing to restart, VPN keeps running
+    if [ -f "$SINGBOX_INIT" ] && ! cmp -s "$cfg_prev" "$SINGBOX_CONFIG"; then
         "$SINGBOX_INIT" restart >/dev/null 2>&1
-        sleep 2
-        if ! pgrep -f "sing-box" >/dev/null 2>&1; then
+        # sing-box may take a few seconds to come up after the restart
+        local i=0
+        while [ $i -lt 20 ] && ! pgrep -f "sing-box run" >/dev/null 2>&1; do sleep 1; i=$((i + 1)); done
+        if ! pgrep -f "sing-box run" >/dev/null 2>&1; then
+            # put everything back as it was
+            cat "$creds_prev" > "$VPN_SERVER_CREDS"
+            [ -s "$cfg_prev" ] && cat "$cfg_prev" > "$SINGBOX_CONFIG"
+            [ "$forwarded" = true ] && move_port_forward "$new_port" "$old_port"
+            "$SINGBOX_INIT" restart >/dev/null 2>&1
+            rm -f "$creds_prev" "$cfg_prev"
+            log_action "VPN_SERVER_PORT_CHANGED" "$utype: $old_port -> $new_port failed, rolled back"
             json_error "errors.singboxStartFailed" 500
             return
         fi
     fi
+    rm -f "$creds_prev" "$cfg_prev"
     
-    log_action "VPN_SERVER_PORT_CHANGED" "Port changed from $old_port to $new_port"
-    json_success "{\"message\":\"Port changed to $new_port\",\"port\":$new_port,\"old_port\":$old_port,\"port_forwarding_updated\":$old_port_was_open}"
+    log_action "VPN_SERVER_PORT_CHANGED" "$utype: port changed from $old_port to $new_port"
+    json_success "{\"message\":\"Port changed to $new_port\",\"type\":\"$utype\",\"port\":$new_port,\"old_port\":$old_port,\"port_forwarding_updated\":$forwarded}"
 }
 
 # =============================================================================
@@ -1262,7 +1290,8 @@ case "$REQUEST_METHOD" in
             change-port)
                 POST_DATA=$(read_post_data)
                 NEW_PORT=$(echo "$POST_DATA" | jq -r '.port // empty')
-                change_server_port "$NEW_PORT"
+                PORT_TYPE=$(echo "$POST_DATA" | jq -r '.type // "ws"')
+                change_server_port "$NEW_PORT" "$PORT_TYPE"
                 ;;
             import)
                 # Import users bundle. Body: {type, version, users:[...], mode:"skip|overwrite"}

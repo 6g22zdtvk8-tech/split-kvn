@@ -536,8 +536,11 @@ probe_server() {
     sing-box run -c "$cfg" >/dev/null 2>&1 &
     pid=$!
     sleep 2
-    # WireGuard/AmneziaWG: the first request waits for the handshake (~5 s)
-    curl -s -m 10 -o /dev/null -w '%{http_code}' --socks5-hostname 127.0.0.1:2098 https://www.gstatic.com/generate_204 2>/dev/null | grep -q '^204$' && ok=0
+    # WireGuard/AmneziaWG: the first request waits for the handshake; an AmneziaWG 3.0
+    # handshake (junk packets, timing ranges) did not always fit in 10 s
+    local wait=10
+    [ "$(printf '%s' "$out" | jq -r '.type' 2>/dev/null)" = "wireguard" ] && wait=20
+    curl -s -m "$wait" -o /dev/null -w '%{http_code}' --socks5-hostname 127.0.0.1:2098 https://www.gstatic.com/generate_204 2>/dev/null | grep -q '^204$' && ok=0
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     rm -f "$cfg"
     return $ok
@@ -793,7 +796,7 @@ multi_checks_merge() {
 # Check one server of the group now through sing-box itself; records the result
 multi_check_one() {
     local id="$1" r t=$(date +%s)
-    r=$(curl -s -m 12 "$CLASH_API/proxies/m-$id/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" 2>/dev/null)
+    r=$(curl -s -m 20 "$CLASH_API/proxies/m-$id/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=15000" 2>/dev/null)
     multi_checks_merge "$(printf '%s' "$r" | jq -c --arg k "m-$id" --argjson t "$t" '
         if (.delay // 0) > 0 then {($k): {ok: true, delay: .delay, time: $t}}
         else {($k): {ok: false, error: (if (.message // "") == "Timeout" then "timeout" else "failed" end), time: $t}} end' 2>/dev/null \
@@ -848,7 +851,11 @@ multi_status_json() {
              | (if $d == null and $cfresh and $c.ok == true then $c.delay else $d end) as $d
              | . + {check_error: $err}
              + {delay: (if $d == null or $d == 0 then null else $d end),
-                status: (if $err != null or $d == 0 or alive($t) == false or ($t == $main and $main_out) then "down"
+                # the fallback leaves the main server for a minute after a failed connection
+                # (sing-box blacklist) and tries it again by itself; while the main server
+                # answers its own check it is not shown as down, only as "moving back"
+                status: (if $err != null or $d == 0 or alive($t) == false then "down"
+                         elif $t == $main and $main_out then "returning"
                          elif $t == $main then "primary"
                          elif $d == null then "unknown" else "reserve" end),
                 main: ($t == $main),
@@ -1300,6 +1307,8 @@ apply_singbox_vpn_items() {
         # (without it every server switch reset them to Direct primary)
         local vpnclient_policy=$(jq -r '.policies.vpn_server // "split"' "$VPN_MANAGER_HOME/routing_policies.json" 2>/dev/null)
         local vpnclient_rules=$(generate_vpnclient_route_rules "$tag" "${vpnclient_policy:-split}")
+        local policy_rules=$(device_policy_rules_json "$tag" 2>/dev/null); [ -n "$policy_rules" ] || policy_rules='[]'
+        local policy_inbounds=$(device_policy_inbounds_json 2>/dev/null); [ -n "$policy_inbounds" ] || policy_inbounds='[]'
         
         # Remove old outbound with same tag, add new one, set final.
         #
@@ -1322,6 +1331,7 @@ apply_singbox_vpn_items() {
         # Log level: warn normally (info logs every connection and wears the drive out),
         # info only while verbose mode is on
         jq --argjson items "$items_json" --arg tag "$tag" --argjson vpnclient_rules "$vpnclient_rules" \
+           --argjson policy_rules "$policy_rules" --argjson policy_inbounds "$policy_inbounds" \
            --arg loglevel "$(singbox_log_level)" \
            '
            # direct-lan-* (B8): exactly the outbounds the new rules name
@@ -1339,9 +1349,13 @@ apply_singbox_vpn_items() {
            | .log = ((.log // {}) + {"level": $loglevel, "timestamp": true})
            | .route.final = $tag
            | .route.default_domain_resolver = "bootstrap"
+           # B36: one SOCKS inbound per policy, for the device policies of the firmware
+           | .inbounds = ([(.inbounds // [])[] | select((.tag // "") | startswith("policy-") | not)] + $policy_inbounds)
            | .route.rules = (
-               # Remove old rules for ss-server-in, health-check-in and ip_is_private, then re-add
-               [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .inbound != ["health-check-in"] and .ip_is_private != true)]
+               # Remove old rules for ss-server-in, health-check-in, the policy inbounds and ip_is_private, then re-add
+               [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .inbound != ["health-check-in"] and .ip_is_private != true
+                   and ((.inbound // [""])[0] | tostring | startswith("policy-") | not))]
+               + $policy_rules
                + (if $vpnclient_rules != [] then $vpnclient_rules else [] end)
                # Always force health-check-in through the active VPN outbound,
                # so the failover daemon can verify the actual tunnel health (not the ISP path).
@@ -2195,9 +2209,13 @@ update_panel_name_dns() {
 # Parameters:
 #   $1 - vpn_tag (outbound name for VPN, default "vpn")
 #   $2 - policy (direct/split/fullvpn, default "split")
-generate_vpnclient_route_rules() {
+generate_policy_route_rules() {
     local vpn_tag="$1"
     local policy="$2"
+    local inbound="${3:-ss-server-in}"
+    # VPN-server clients come in over WebSocket, Reality, TLS and xhttp (B37)
+    local inb_list="\"$inbound\""
+    [ "$inbound" = "ss-server-in" ] && inb_list='"ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"'
     [ -z "$vpn_tag" ] && vpn_tag="vpn"
     [ -z "$policy" ] && policy="split"
     
@@ -2206,20 +2224,20 @@ generate_vpnclient_route_rules() {
     
     case "$policy" in
         direct)
-            # All ss-server-in traffic -> direct (VPN not used)
+            # All traffic of the inbound -> direct (VPN not used)
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"direct\"
   }"
             has_rules=1
             ;;
         fullvpn)
-            # All ss-server-in traffic -> VPN
+            # All traffic of the inbound -> VPN
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2245,7 +2263,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"domain_suffix\": $domain_suffixes,
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2257,7 +2275,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"ip_cidr\": $ip_cidrs,
     \"outbound\": \"$vpn_tag\"
   }"
@@ -2269,7 +2287,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"udp\"],
     \"domain_suffix\": $domain_suffixes_udp,
     \"outbound\": \"$vpn_tag\"
@@ -2282,7 +2300,7 @@ generate_vpnclient_route_rules() {
                 [ $has_rules -eq 1 ] && rules="$rules,"
                 rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"udp\"],
     \"ip_cidr\": $ip_cidrs_udp,
     \"outbound\": \"$vpn_tag\"
@@ -2311,7 +2329,7 @@ generate_vpnclient_route_rules() {
                     if [ -n "$net" ]; then
                         rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"udp\"],
     \"$key\": $list,
     \"outbound\": \"direct\"
@@ -2319,7 +2337,7 @@ generate_vpnclient_route_rules() {
                     else
                         rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"$key\": $list,
     \"outbound\": \"direct\"
   }"
@@ -2332,7 +2350,7 @@ generate_vpnclient_route_rules() {
             [ $has_rules -eq 1 ] && rules="$rules,"
             rules="$rules
   {
-    \"inbound\": [\"ss-server-in\",\"ss-server-reality-in\",\"ss-server-tls-in\",\"ss-server-xhttp-in\"],
+    \"inbound\": [$inb_list],
     \"network\": [\"tcp\", \"udp\"],
     \"outbound\": \"$rest_out\"
   }"
@@ -2342,6 +2360,45 @@ generate_vpnclient_route_rules() {
     
     rules="$rules
 ]"
+    echo "$rules"
+}
+
+# =============================================================================
+# B36: device policies. One local SOCKS inbound per routing policy; the firmware's
+# "Proxy" connections point at them and its access policies bind devices by MAC,
+# over cable and Wi-Fi alike (see scripts/keenetic-policies.sh).
+# =============================================================================
+DEVICE_POLICIES="fullvpn vpnprimary split direct"
+
+# {"fullvpn":21081,...} — settings.json device_policy_ports over the defaults
+device_policy_ports_json() {
+    jq -c '{fullvpn: 21081, vpnprimary: 21082, split: 21083, direct: 21084} + (.device_policy_ports // {})' \
+        "$SETTINGS_FILE" 2>/dev/null || echo '{"fullvpn":21081,"vpnprimary":21082,"split":21083,"direct":21084}'
+}
+
+device_policy_inbounds_json() {
+    device_policy_ports_json | jq -c '[to_entries[] | {type: "socks", tag: ("policy-" + .key + "-in"),
+        listen: "127.0.0.1", listen_port: .value}]'
+}
+
+# Route rules for the policy inbounds: sniff (the firmware hands over addresses, the
+# site name comes from the connection itself), home addresses direct, then the same
+# rules the segments of that policy get
+device_policy_rules_json() {
+    local vpn_tag="${1:-vpn}" p rules tags
+    tags=$(for p in $DEVICE_POLICIES; do printf '"policy-%s-in",' "$p"; done)
+    tags="[${tags%,}]"
+    rules="[{\"inbound\": $tags, \"action\": \"sniff\"}, {\"inbound\": $tags, \"ip_is_private\": true, \"outbound\": \"direct\"}]"
+    for p in $DEVICE_POLICIES; do
+        rules=$(printf '%s' "$rules" | jq -c --argjson r "$(generate_policy_route_rules "$vpn_tag" "$p" "policy-$p-in")" '. + $r') || return 1
+    done
+    echo "$rules"
+}
+
+# VPN-server clients (ss-server-in) route by the vpn_server policy; the B8 rules for
+# their access to the home network go first.
+generate_vpnclient_route_rules() {
+    local rules=$(generate_policy_route_rules "$1" "$2" ss-server-in)
 
     # B8 rules go first: they take private addresses only, the policy keeps the rest.
     # If they cannot be built the policy rules go out alone, as before.
@@ -2415,6 +2472,8 @@ update_vpnclient_rules() {
     
     # Generate new rules based on policy
     local vpnclient_rules=$(generate_vpnclient_route_rules "$vpn_tag" "$policy")
+    local policy_rules=$(device_policy_rules_json "$vpn_tag" 2>/dev/null); [ -n "$policy_rules" ] || policy_rules='[]'
+    local policy_inbounds=$(device_policy_inbounds_json 2>/dev/null); [ -n "$policy_inbounds" ] || policy_inbounds='[]'
     
     if ! command -v jq >/dev/null 2>&1; then
         log_action "VPNCLIENT_RULES" "jq not available"
@@ -2425,14 +2484,19 @@ update_vpnclient_rules() {
     
     # Update route.rules and the direct-lan-* outbounds they use (B8), preserving the rest
     jq --argjson vpnclient_rules "$vpnclient_rules" \
+       --argjson policy_rules "$policy_rules" --argjson policy_inbounds "$policy_inbounds" \
        '
        # direct-lan-* (B8): exactly the outbounds the new rules name
        ([$vpnclient_rules[]? | .outbound? // empty | select(type == "string" and startswith("direct-lan-"))] | unique
         | map({type: "direct", tag: ., bind_interface: ltrimstr("direct-lan-")})) as $lan_outbounds
        | .outbounds = ([(.outbounds // [])[] | select((.tag // "") | startswith("direct-lan-") | not)] + $lan_outbounds)
+       | .inbounds = ([(.inbounds // [])[] | select((.tag // "") | startswith("policy-") | not)] + $policy_inbounds)
        | .route.rules = (
-           # Remove old rules for ss-server-in and ip_is_private, then re-add
-           [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .ip_is_private != true)]
+           # Remove old rules for ss-server-in, the policy inbounds and ip_is_private, then re-add.
+           # health-check-in keeps its place: it is not one of these
+           [(.route.rules // [])[] | select(.inbound != ["ss-server-in"] and .inbound != ["ss-server-in","ss-server-reality-in"] and .inbound != ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"] and .ip_is_private != true
+               and ((.inbound // [""])[0] | tostring | startswith("policy-") | not))]
+           + $policy_rules
            + (if $vpnclient_rules != [] then $vpnclient_rules else [] end)
            + [{"ip_is_private": true, "outbound": "direct"}]
          )

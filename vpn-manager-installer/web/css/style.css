@@ -1009,6 +1009,10 @@ select {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 500;
+    /* a long label stays inside its tile */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tile-value {
@@ -1100,18 +1104,31 @@ select {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     margin-bottom: 1rem;
 }
 
 .section-header h2 {
     font-size: 1.125rem;
     font-weight: 600;
+    white-space: nowrap;
 }
 
+/* Buttons keep one line each, so they are all the same height; when the row is too
+   narrow whole buttons move to the next line instead of squeezing their text */
 .section-actions {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem 0.75rem;
+}
+
+.section-actions .btn {
+    white-space: nowrap;
+    min-height: 40px;
+    box-sizing: border-box;
 }
 
 .section-description {
@@ -2140,6 +2157,7 @@ select {
     .section-actions {
         flex-wrap: wrap;
         gap: 0.5rem;
+        justify-content: flex-start;
     }
 
     .subscription-header {
@@ -4524,7 +4542,9 @@ a.link:hover {
 .multi-row {
     /* Fixed columns: badge, traffic/button, delay and remove line up row under row */
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) 5.75rem 9.5rem 4.5rem 2rem;
+    /* last column holds two icon buttons (check + remove), ~3.5rem; the delay column
+       fits "Not checked" — narrower values used to spill over the buttons (B33) */
+    grid-template-columns: 8px minmax(0, 1fr) 5.75rem 9.5rem 5.75rem 3.75rem;
     grid-template-areas: "dot name badge slot delay remove";
     align-items: center;
     gap: 0.625rem;
@@ -4567,6 +4587,10 @@ a.link:hover {
 
 .multi-dot.down {
     background: var(--status-error);
+}
+
+.multi-dot.returning {
+    background: var(--status-warning);
 }
 
 .multi-row-main {
@@ -4618,7 +4642,9 @@ a.link:hover {
 }
 
 .multi-delay {
-    min-width: 4.5rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-family: var(--font-mono);
     font-size: 0.75rem;
     text-align: right;
@@ -4742,7 +4768,7 @@ a.link:hover {
 @media (max-width: 600px) {
     /* Two lines: name and badge on top; button/traffic, delay, remove below */
     .multi-row {
-        grid-template-columns: 8px minmax(0, 1fr) 4.5rem 2rem;
+        grid-template-columns: 8px minmax(0, 1fr) 5.75rem 3.75rem;
         grid-template-areas:
             "dot name   badge  badge"
             ".   slot   delay  remove";
@@ -4754,8 +4780,10 @@ a.link:hover {
         justify-self: end;
     }
 
+    /* the slot takes its column: a fixed width ran out of the row on narrow phones */
     .multi-row .multi-slot {
-        width: 9.5rem;
+        width: 100%;
+        max-width: 9.5rem;
         justify-self: end;
     }
 
@@ -4823,3 +4851,45 @@ a.link:hover {
         flex-direction: column;
     }
 }
+
+/* B36: device policies */
+.devpolicy-need { border: 1px solid var(--status-warning, #d29922); border-radius: var(--radius-md); padding: 0.6rem 0.75rem;
+    font-size: 0.8125rem; line-height: 1.55; margin: 0.5rem 0 0.75rem; background: rgba(210, 153, 34, 0.08); }
+.devpolicy-need ol { margin: 0.35rem 0 0 1.1rem; padding: 0; }
+.devpolicy-links { font-size: 0.8125rem; line-height: 1.6; margin: 0.25rem 0 0.75rem; }
+.devpolicy-links a, .devpolicy-need a { color: var(--accent-primary); }
+.devpolicy-list { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.5rem 0 0.25rem; }
+.devpolicy-row { display: grid; grid-template-columns: minmax(0, 1fr) 11rem 2.25rem; grid-template-areas: "info act del" "edit edit edit";
+    gap: 0.5rem; align-items: center; padding: 0.5rem 0.625rem; border: 1px solid var(--border-light);
+    border-radius: var(--radius-md); background: var(--bg-secondary); }
+.devpolicy-info { grid-area: info; min-width: 0; }
+.devpolicy-act { grid-area: act; width: 100%; }
+.devpolicy-del { grid-area: del; }
+.devpolicy-name { font-size: 0.875rem; color: var(--text-primary); }
+.devpolicy-sub { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.125rem; }
+.devpolicy-sub.ok { color: var(--status-success, #3fb950); }
+.devpolicy-sub.warn { color: var(--status-warning, #d29922); }
+.devpolicy-port { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); }
+.devpolicy-port button { background: none; border: 0; padding: 0; margin-left: 0.35rem; cursor: pointer;
+    color: var(--accent-primary); font-family: var(--font-family); font-size: 0.75rem; }
+.devpolicy-edit { grid-area: edit; }
+.devpolicy-edit .warning-box { display: block; margin: 0.25rem 0 0; }
+.devpolicy-edit-line { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.8125rem; }
+.devpolicy-edit-line input { width: 6.75rem; }
+.devpolicy-edit-line button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--text-secondary);
+    text-decoration: underline; font-size: 0.8125rem; }
+@media (max-width: 600px) {
+    .devpolicy-row { grid-template-columns: minmax(0, 1fr) 2.25rem; grid-template-areas: "info info" "act del" "edit edit"; }
+}
+
+.devpolicy-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; margin-top: 0.75rem; }
+.devpolicy-cards div { border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: 0.5rem 0.625rem;
+    font-size: 0.75rem; color: var(--text-secondary); line-height: 1.45; }
+.devpolicy-cards b { display: block; color: var(--text-primary); font-size: 0.8125rem; margin-bottom: 0.2rem; }
+.devpolicy-steps { display: flex; flex-direction: column; gap: 0.75rem; }
+.devpolicy-step { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: 0.75rem 0.9rem; }
+.devpolicy-step h3 { margin: 0 0 0.35rem; font-size: 0.9rem; color: var(--text-primary); }
+.devpolicy-step p { margin: 0.2rem 0; font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
+.devpolicy-step a { color: var(--accent-primary); }
+.devpolicy-step img { display: block; max-width: 100%; height: auto; margin-top: 0.5rem; border: 1px solid var(--border-light); border-radius: var(--radius-md); }
+@media (max-width: 600px) { .devpolicy-cards { grid-template-columns: 1fr 1fr; } }

@@ -705,6 +705,35 @@ ensure_singbox_dns_bootstrap() {
     fi
 }
 
+# B36: sing-box inbounds for the device policies, then the router's own connections and
+# access policies pointing at them (only if the firmware has the "Proxy client" component;
+# the panel tells the owner how to add it). Safe to run on every install and update.
+device_policies_setup() {
+    local common_sh="/opt/share/www/vpn-manager/api/common.sh"
+    [ -f "$common_sh" ] && [ -f "$SINGBOX_CONFIG" ] || return 0
+    local prev="/tmp/devpolicy-install.$$"
+    cp "$SINGBOX_CONFIG" "$prev" 2>/dev/null || return 0
+    if ( . "$common_sh" && update_vpnclient_rules && singbox_config_ok ) >/dev/null 2>&1; then
+        if ! cmp -s "$prev" "$SINGBOX_CONFIG"; then
+            pidof sing-box >/dev/null 2>&1 && /opt/etc/init.d/S99sing-box restart >/dev/null 2>&1
+            log_ok "sing-box: inbounds for device policies in place"
+        fi
+    else
+        cat "$prev" > "$SINGBOX_CONFIG"
+        log_warn "sing-box did not accept the device policy inbounds — config left as it was"
+    fi
+    rm -f "$prev"
+    local kp="$VPN_MANAGER_HOME/scripts/keenetic-policies.sh"
+    [ -x "$kp" ] || return 0
+    "$kp" apply --quiet
+    case $? in
+        0) log_ok "Device policies ready in the router (Internet access policies, \"SplitKVN ...\")"
+           /opt/etc/init.d/S98singbox-rules reload >/dev/null 2>&1 ;;
+        2) log_info "No \"Proxy client\" component in the firmware — device policies can be created later from the panel" ;;
+        *) log_warn "Device policies could not be created in the router" ;;
+    esac
+}
+
 migrate_existing_singbox_config() {
     local common_sh="/opt/share/www/vpn-manager/api/common.sh"
     if [ ! -f "$common_sh" ] || [ ! -f "$SINGBOX_CONFIG" ]; then
@@ -1421,6 +1450,11 @@ install_vpn_manager() {
             log_ok "Network diagnostics switched on for $NET_DIAG_ON_INSTALL_HOURS h"
         fi
     fi
+    # B36: device policies in the router firmware
+    if [ -f "$SCRIPT_DIR/scripts/keenetic-policies.sh" ]; then
+        sed 's/\r$//' "$SCRIPT_DIR/scripts/keenetic-policies.sh" > "$VPN_MANAGER_HOME/scripts/keenetic-policies.sh"
+        chmod +x "$VPN_MANAGER_HOME/scripts/keenetic-policies.sh"
+    fi
     if [ -f "$SCRIPT_DIR/scripts/S55dns-dot-stub" ]; then
         sed 's/\r$//' "$SCRIPT_DIR/scripts/S55dns-dot-stub" > /opt/etc/init.d/S55dns-dot-stub
         chmod +x /opt/etc/init.d/S55dns-dot-stub
@@ -1723,6 +1757,8 @@ start_services() {
     # VPN-server now built-in in sing-box how VLESS inbound
     # Separate ssserver and 110-vpn-client-routing no longer needed
     log_ok "VPN-server built-in in sing-box (port $SS_SERVER_PORT)"
+
+    device_policies_setup
 }
 
 # =============================================================================
@@ -1929,6 +1965,8 @@ run_update() {
         "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" stub || log_warn "DoT stub not available — VPN-list domains use the normal upstream"
         [ -x "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" ] && "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" >/dev/null 2>&1
     fi
+
+    device_policies_setup
 
     echo ""
     printf "${GREEN}============================================${NC}\n"

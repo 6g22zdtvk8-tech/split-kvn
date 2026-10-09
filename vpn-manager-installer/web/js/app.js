@@ -290,6 +290,7 @@
             'multi.statusMain': 'Main',
             'multi.statusReserve': 'Reserve',
             'multi.statusDown': 'Not responding',
+            'multi.statusReturning': 'Moving traffic back…',
             'multi.errTimeout': 'No answer (timeout)',
             'multi.errFailed': 'Check failed',
             'multi.checkOne': 'Check this server now',
@@ -544,7 +545,12 @@
             'server.userTypeHint': 'TLS and Reality are encrypted: Happ and other Xray clients accept only those. Each type has its own port: TLS (WebSocket) 8444, TLS (xhttp) 8445, Reality 8443, standard 8388.',
             'server.port': 'Server Port',
             'server.portLabel': 'VPN Server Port',
-            'server.portHint': 'Valid values: 1024-65535. After changing port, all connected VPN clients will lose connection and need to reconnect with new port.',
+            'server.portHint': "Valid values: 1024-65535. After a change, users of that type lose the connection: their links and QR codes change and must be sent again. The router's port forward moves by itself.",
+            'server.portLabelWs': 'Standard (WebSocket)',
+            'server.portLabelTls': 'TLS (WebSocket)',
+            'server.portLabelXhttp': 'TLS (xhttp)',
+            'server.portLabelReality': 'Reality',
+            'server.portChangeWarningType': 'Change the {type} port to {port}?\n\nUsers of this type lose the connection: their links and QR codes change and must be sent again.',
             'server.portChangeWarning': 'All connected VPN clients will lose connection. They will need to reconfigure with new port {port}. Continue?',
             
             // Settings
@@ -605,6 +611,64 @@
             'settings.resetToDefault': 'Reset',
             'settings.listsSourceWarning': '⚠️ Warning: The remote source must contain 4 text files with exact names: tcp_udp_domains.txt, udp_domains.txt, tcp_udp_subnets.txt, udp_subnets.txt. If remote lists are unavailable, routing will use local lists only (empty by default).',
             'settings.confirmResetListsSource': 'Reset remote lists source URL to default?',
+            'devpolicy.title': 'Device policies',
+            'devpolicy.intro': 'Here our routing modes become available in the router\'s own control panel. There you can give any device — a phone, a laptop, a TV — its own policy, no matter how and where it is connected.',
+            'tab.devpolicy': 'Device policies',
+            'devpolicy.d.fullvpn': 'Everything through the VPN. No VPN — no internet.',
+            'devpolicy.d.vpnprimary': 'Russian sites direct, the rest through the VPN.',
+            'devpolicy.d.split': 'Sites from the VPN list through the VPN, the rest direct.',
+            'devpolicy.d.direct': 'Everything direct, the VPN is not used.',
+            'devpolicy.h1': '1. Policies in the router',
+            'devpolicy.h2': '2. How to put a device on a policy',
+            'devpolicy.s1': 'Step 1. Open the client list in the router control panel',
+            'devpolicy.s1link': 'Open the client list →',
+            'devpolicy.s1hint': '(new tab). You need the router administrator login and password.',
+            'devpolicy.s2': 'Step 2. Click the device',
+            'devpolicy.s2hint': 'The device must be in "Registered clients". If it is not there, register it first (it may be listed under the unregistered ones).',
+            'devpolicy.s3': 'Step 3. Choose a "SplitKVN …" access policy',
+            'devpolicy.s3hint': 'The change is saved at once.',
+            'devpolicy.s4': 'Step 4. Cable and Wi-Fi are two devices for the router',
+            'devpolicy.s4a': 'Anything that can connect both ways — a laptop, a computer, a TV, a TV box — has one address for cable and another for Wi-Fi: give the policy to both, even if right now it is connected only one way.',
+            'devpolicy.s4b': 'iPhone, iPad, Mac and Android use a different "private" address in each Wi-Fi network by default. Turn it off for the home network, or the router will not recognise the device: iPhone/iPad — Settings → Wi-Fi → (i) next to the network → Private Wi-Fi Address → Off; Mac — System Settings → Wi-Fi → Details → Private Wi-Fi address → Off; Android — Wi-Fi → network → Privacy → Use device MAC.',
+            'devpolicy.s5': 'How to check',
+            'devpolicy.s5a': 'On the device open 2ip.ru and any foreign "what is my IP" site. With "VPN primary" 2ip.ru shows your home address and the foreign site shows the VPN address.',
+            'devpolicy.hint': 'Put a single device on a routing policy, whatever segment, cable or Wi-Fi it uses.',
+            'devpolicy.needTitle': 'The router firmware needs the "Proxy client" component.',
+            'devpolicy.needText': 'Without it the router cannot do these policies.',
+            'devpolicy.need1': 'Open {link}.',
+            'devpolicy.need1Link': 'the router control panel → General settings',
+            'devpolicy.need2': '"Component options" → tick "Proxy client" → "Install update".',
+            'devpolicy.need3': 'The router restarts (about 5 minutes without internet). Then come back and press "Create in the router".',
+            'devpolicy.whereTitle': 'Where this is in the router control panel:',
+            'devpolicy.linkConnections': 'Proxy connections',
+            'devpolicy.linkConnectionsPath': 'Internet → Other connections → Proxy',
+            'devpolicy.linkPolicies': 'Access policies',
+            'devpolicy.linkPoliciesPath': 'Internet → Connection priorities → Internet access policies',
+            'devpolicy.linkDevices': 'Assign a device',
+            'devpolicy.linkDevicesPath': 'Device list → device → Internet access policy → "SplitKVN …"',
+            'devpolicy.inRouter': '✓ in the router ({name})',
+            'devpolicy.notInRouter': 'not in the router',
+            'devpolicy.wrongPort': 'the router uses port {port} — the connection points elsewhere',
+            'devpolicy.portWillChange': 'port changed: in the router {old} → will be {new}',
+            'devpolicy.port': 'port {port}',
+            'devpolicy.edit': '✎ change',
+            'devpolicy.newPort': 'New port:',
+            'devpolicy.cancel': 'cancel',
+            'devpolicy.portsWarning': '<strong>⚠️ Danger zone.</strong> Change the port only if you know why. If you don\'t know what this is, you most likely don\'t need it.',
+            'devpolicy.btnCreate': 'Create in the router',
+            'devpolicy.btnUpToDate': 'Up to date',
+            'devpolicy.btnUpToDateHint': 'Everything matches — nothing to do',
+            'devpolicy.btnSave': 'Save and update',
+            'devpolicy.btnFix': 'Fix in the router',
+            'devpolicy.btnDelete': 'Remove from the router',
+            'devpolicy.btnDeleteNone': 'Nothing to remove',
+            'devpolicy.deleteConfirm': 'Remove "{name}" from the router? Devices on this policy go back to normal routing.',
+            'devpolicy.done': 'Done',
+            'devpolicy.removed': 'Removed from the router',
+            'devpolicy.p.fullvpn': 'VPN only',
+            'devpolicy.p.vpnprimary': 'VPN primary',
+            'devpolicy.p.split': 'Direct primary',
+            'devpolicy.p.direct': 'Direct',
             'settings.dangerZone': '⚠️ Danger Zone',
             'settings.dangerZoneDescription': 'Advanced settings that can break DNS and VPN functionality. Only change if you know what you\'re doing.',
             'settings.dnsmasqPort': 'Internal dnsmasq Port',
@@ -1091,7 +1155,19 @@
             'donate.copyAddress': 'Copy address',
             'donate.copied': 'Address copied!',
             'donate.thankYou': 'Thank you for your support!',
-            'donate.close': 'OK'
+            'donate.close': 'OK',
+            // Phrases that had only a Russian text, and the system monitor card
+            'server.noUsersWarning': 'No users — nobody can connect. Add a user to activate the VPN server.',
+            'server.stoppedMsg': 'VPN server stopped',
+            'server.path': 'Path',
+            'server.useVlessHint': 'Use the vless:// link or the QR code to connect.',
+            'system.monitor': 'System monitor',
+            'system.refresh': 'Refresh',
+            'system.toggle': 'Collapse/expand',
+            'system.cpu': 'CPU',
+            'system.memory': 'Memory',
+            'system.disk': 'Drive',
+            'system.uptime': 'Uptime',
         },
         
         ru: {
@@ -1349,6 +1425,7 @@
             'multi.statusMain': 'Главный',
             'multi.statusReserve': 'Запасной',
             'multi.statusDown': 'Не отвечает',
+            'multi.statusReturning': 'Возвращаем трафик…',
             'multi.errTimeout': 'Нет ответа (таймаут)',
             'multi.errFailed': 'Проверка не прошла',
             'multi.checkOne': 'Проверить этот сервер сейчас',
@@ -1700,7 +1777,12 @@
             'server.useVlessHint': 'Используйте ссылку vless:// или QR-код для подключения.',
             'server.port': 'Порт сервера',
             'server.portLabel': 'Порт VPN-сервера',
-            'server.portHint': 'Допустимые значения: 1024-65535. После смены порта все подключённые VPN-клиенты потеряют соединение и должны будут переподключиться с новым портом.',
+            'server.portHint': 'Допустимые значения: 1024-65535. После смены порта пользователи этого типа отключатся: их ссылки и QR-коды изменятся, их нужно будет разослать заново. Проброс порта на роутере переедет сам.',
+            'server.portLabelWs': 'Обычный (WebSocket)',
+            'server.portLabelTls': 'TLS (WebSocket)',
+            'server.portLabelXhttp': 'TLS (xhttp)',
+            'server.portLabelReality': 'Reality',
+            'server.portChangeWarningType': 'Сменить порт типа «{type}» на {port}?\n\nПользователи этого типа отключатся: их ссылки и QR-коды изменятся, их нужно будет разослать заново.',
             'server.portChangeWarning': 'Все подключённые VPN-клиенты потеряют соединение. Им нужно будет переконфигурировать с новым портом {port}. Продолжить?',
             
             // Settings
@@ -1761,6 +1843,64 @@
             'settings.resetToDefault': 'Сбросить',
             'settings.listsSourceWarning': '⚠️ Внимание: Удалённый источник должен содержать 4 текстовых файла с точными именами: tcp_udp_domains.txt, udp_domains.txt, tcp_udp_subnets.txt, udp_subnets.txt. Если удалённые списки недоступны, маршрутизация будет использовать только локальные списки (по умолчанию пустые).',
             'settings.confirmResetListsSource': 'Сбросить URL источника удалённых списков к значению по умолчанию?',
+            'devpolicy.title': 'Политики для устройств',
+            'devpolicy.intro': 'Здесь наши режимы маршрутизации становятся доступны в собственной панели управления роутера. Там любому устройству — телефону, ноутбуку, телевизору — можно назначить свою политику. Неважно, как и где оно подключено.',
+            'tab.devpolicy': 'Политики для устройств',
+            'devpolicy.d.fullvpn': 'Всё через VPN. Без VPN — без интернета.',
+            'devpolicy.d.vpnprimary': 'Российское напрямую, остальное через VPN.',
+            'devpolicy.d.split': 'Сайты из списка VPN — через VPN, остальное напрямую.',
+            'devpolicy.d.direct': 'Всё напрямую, VPN не используется.',
+            'devpolicy.h1': '1. Политики в роутере',
+            'devpolicy.h2': '2. Как назначить политику устройству',
+            'devpolicy.s1': 'Шаг 1. Откройте списки клиентов в панели управления роутера',
+            'devpolicy.s1link': 'Открыть списки клиентов →',
+            'devpolicy.s1hint': '(в новой вкладке). Нужен логин и пароль администратора роутера.',
+            'devpolicy.s2': 'Шаг 2. Нажмите на устройство',
+            'devpolicy.s2hint': 'Устройство должно быть в «Зарегистрированных клиентах». Если его там нет — сначала зарегистрируйте (оно может быть среди незарегистрированных).',
+            'devpolicy.s3': 'Шаг 3. Выберите политику доступа «SplitKVN …»',
+            'devpolicy.s3hint': 'Изменение сохраняется сразу.',
+            'devpolicy.s4': 'Шаг 4. Кабель и Wi-Fi — для роутера это два разных устройства',
+            'devpolicy.s4a': 'Всё, что умеет подключаться и так и так — ноутбук, компьютер, телевизор, приставка, — имеет один адрес для кабеля и другой для Wi-Fi. Назначьте политику обоим, даже если сейчас устройство подключено только одним способом.',
+            'devpolicy.s4b': 'iPhone, iPad, Mac и Android по умолчанию в каждой сети Wi-Fi ходят с «частным» адресом. Выключите его для домашней сети, иначе роутер не узнает устройство: iPhone/iPad — Настройки → Wi-Fi → (i) у сети → «Частный адрес Wi-Fi» → Выкл; Mac — Системные настройки → Wi-Fi → Подробнее → «Частный адрес Wi-Fi» → Выкл; Android — Wi-Fi → сеть → Конфиденциальность → «MAC-адрес устройства».',
+            'devpolicy.s5': 'Как проверить',
+            'devpolicy.s5a': 'Откройте на устройстве 2ip.ru и любой зарубежный сайт «мой IP». При «VPN основной» 2ip.ru покажет домашний адрес, а зарубежный сайт — адрес VPN.',
+            'devpolicy.hint': 'Отдельное устройство можно перевести на нужную политику маршрутизации, в каком бы сегменте оно ни было, по кабелю или по Wi-Fi.',
+            'devpolicy.needTitle': 'Нужен компонент прошивки «Клиент прокси».',
+            'devpolicy.needText': 'Без него роутер не умеет такие политики.',
+            'devpolicy.need1': 'Откройте {link}.',
+            'devpolicy.need1Link': 'панель управления роутера → Общие настройки',
+            'devpolicy.need2': '«Изменить набор компонентов» → отметьте «Клиент прокси» → «Установить обновление».',
+            'devpolicy.need3': 'Роутер перезагрузится (около 5 минут без интернета). Потом вернитесь сюда и нажмите «Создать в роутере».',
+            'devpolicy.whereTitle': 'Где это в панели управления роутера:',
+            'devpolicy.linkConnections': 'Подключения-прокси',
+            'devpolicy.linkConnectionsPath': 'Интернет → Другие подключения → Прокси',
+            'devpolicy.linkPolicies': 'Политики доступа',
+            'devpolicy.linkPoliciesPath': 'Интернет → Приоритеты подключений → Политики доступа в интернет',
+            'devpolicy.linkDevices': 'Назначить устройство',
+            'devpolicy.linkDevicesPath': 'Список устройств → устройство → «Политика доступа в интернет» → «SplitKVN …»',
+            'devpolicy.inRouter': '✓ в роутере ({name})',
+            'devpolicy.notInRouter': 'нет в роутере',
+            'devpolicy.wrongPort': 'в роутере стоит порт {port} — подключение смотрит не туда',
+            'devpolicy.portWillChange': 'порт изменён: в роутере {old} → станет {new}',
+            'devpolicy.port': 'порт {port}',
+            'devpolicy.edit': '✎ изменить',
+            'devpolicy.newPort': 'Новый порт:',
+            'devpolicy.cancel': 'отмена',
+            'devpolicy.portsWarning': '<strong>⚠️ Опасная зона.</strong> Меняйте порт, только если понимаете, зачем. Если не знаете, что это, — вам это, скорее всего, не нужно.',
+            'devpolicy.btnCreate': 'Создать в роутере',
+            'devpolicy.btnUpToDate': 'Актуально',
+            'devpolicy.btnUpToDateHint': 'Всё совпадает — делать ничего не нужно',
+            'devpolicy.btnSave': 'Сохранить и обновить',
+            'devpolicy.btnFix': 'Исправить в роутере',
+            'devpolicy.btnDelete': 'Удалить из роутера',
+            'devpolicy.btnDeleteNone': 'Удалять нечего',
+            'devpolicy.deleteConfirm': 'Удалить «{name}» из роутера? Устройства на этой политике вернутся к обычной маршрутизации.',
+            'devpolicy.done': 'Готово',
+            'devpolicy.removed': 'Удалено из роутера',
+            'devpolicy.p.fullvpn': 'Только VPN',
+            'devpolicy.p.vpnprimary': 'VPN основной',
+            'devpolicy.p.split': 'Напрямую основной',
+            'devpolicy.p.direct': 'Напрямую',
             'settings.dangerZone': '⚠️ Опасная зона',
             'settings.dangerZoneDescription': 'Расширенные настройки, которые могут сломать DNS и VPN. Меняйте только если знаете, что делаете.',
             'settings.dnsmasqPort': 'Внутренний порт dnsmasq',
@@ -2036,7 +2176,80 @@
             'donate.copyAddress': 'Скопировать адрес',
             'donate.copied': 'Адрес скопирован!',
             'donate.thankYou': 'Спасибо за вашу поддержку!',
-            'donate.close': 'OK'
+            'donate.close': 'OK',
+            // Phrases that had only an English text (and the system monitor card, which had none)
+            'actions.retry': 'Повторить',
+            'vpnCheck.title': 'Проверка VPN',
+            'vpnCheck.active': 'VPN работает',
+            'vpnCheck.inactive': 'VPN не работает',
+            'vpnCheck.currentIp': 'Текущий IP',
+            'vpnCheck.vpnServer': 'VPN-сервер',
+            'vpnCheck.notConfigured': 'не настроен',
+            'vpnCheck.status': 'Состояние',
+            'segments.vpnClients': 'VPN-клиенты',
+            'segments.port': 'порт',
+            'dialog.cancel': 'Отмена',
+            'dialog.ok': 'OK',
+            'configModal.addTitle': 'Добавить VPN-сервер',
+            'configModal.saving': 'Сохраняю...',
+            'messages.vpnActivated': 'VPN включён',
+            'messages.intervalChanged': 'Интервал изменён',
+            'ipv6.on': 'IPv6: ВКЛ',
+            'ipv6.off': 'IPv6: ВЫКЛ',
+            'ipv6.confirmDisable': 'Выключить IPv6?\n\nТак VPN работает стабильнее.',
+            'ipv6.confirmEnable': '⚠️ Включить IPv6?\n\nВНИМАНИЕ: с включённым IPv6 VPN может работать неправильно!\nЧасть трафика может пойти мимо VPN.\n\nПродолжить?',
+            'port8388.open': 'Порт 8388: открыт',
+            'port8388.openBtn': 'Открыть порт 8388',
+            'port8388.confirmClose': 'Порт 8388 уже открыт.\n\nЗакрыть? VPN-сервер станет недоступен из интернета.',
+            'port8388.confirmOpen': 'Открыть порт 8388 для VPN-сервера?\n\nК роутеру как к VPN-серверу можно будет подключаться из интернета.',
+            'stopVpn.title': 'Остановить VPN?',
+            'stopVpn.message': 'VPN будет полностью остановлен. Весь трафик пойдёт напрямую, без VPN.',
+            'import.enterUrl': 'Введите ссылку на конфигурацию',
+            'import.pasteConfig': 'Вставьте содержимое файла конфигурации',
+            'import.awgNotSupported': '⚠️ AmneziaWG временно не поддерживается из-за ошибки в sing-box-extended. Используйте обычный WireGuard или другие протоколы.',
+            'import.parseError': 'Не удалось разобрать ссылку',
+            'import.parsingError': 'Ошибка разбора',
+            'confirm.close': 'Закрыть',
+            'config.deleteTitle': 'Удалить конфигурацию',
+            'config.deleteMessage': 'Удалить конфигурацию «{name}»?',
+            'lists.saving': 'Сохраняю...',
+            'lists.savingAndApplying': 'Сохраняю и применяю...',
+            'lists.savedSuccess': 'Сохранено',
+            'lists.domainsSaved': 'Список доменов {type} сохранён',
+            'lists.subnetsSaved': 'Список подсетей {type} сохранён',
+            'lists.loadedFrom': 'Загружено из {file}',
+            'lists.fileLoaded': 'Файл «{file}» загружен',
+            'lists.fileDownloaded': 'Файл «{file}» скачан',
+            'lists.replaceConfirm': 'Заменить текущий список? (Отмена — добавить в конец)',
+            'lists.empty': '(пусто)',
+            'port.changeConfirm': 'Сменить порт на {port}?\n\nПосле смены Split-KVN будет доступен по адресу:\n{url}',
+            'port.changed': 'Порт изменён на {port}. Перейдите по адресу: {url}',
+            'autostart.enabled': 'Автозапуск включён',
+            'autostart.disabled': 'Автозапуск выключен',
+            'password.mismatch': 'Пароли не совпадают',
+            'password.tooShort': 'Пароль должен быть не короче 8 символов',
+            'password.enterRecovery': 'Введите код восстановления',
+            'port.reserved': 'Порт {port} занят системой',
+            'logs.loading': 'Загрузка...',
+            'logs.fileNotExists': 'Файла журнала нет',
+            'logs.empty': '(журнал пуст)',
+            'logs.info': '{path} • строк: {lines} • {size} КБ',
+            'logs.error': 'Ошибка',
+            'logs.confirmClear': 'Очистить журнал «{name}»?',
+            'logs.qrError': 'Ошибка создания QR-кода',
+            'logs.qrLibNotLoaded': 'Библиотека QR-кодов не загрузилась',
+            'autoupdate.enabledMsg': 'Автообновление включено',
+            'autoupdate.disabledMsg': 'Автообновление выключено',
+            'autoupdate.intervalChanged': 'Интервал изменён: {interval}',
+            'autoupdate.updateError': 'Ошибка обновления',
+            'remoteLists.loading': 'Загрузка...',
+            'system.monitor': 'Системный монитор',
+            'system.refresh': 'Обновить',
+            'system.toggle': 'Свернуть/развернуть',
+            'system.cpu': 'Процессор',
+            'system.memory': 'Память',
+            'system.disk': 'Флешка',
+            'system.uptime': 'Работает',
         }
     };
     
@@ -2135,6 +2348,10 @@
         
         // Update document title
         document.title = t('app.title');
+
+        // Parts built in code follow the language too (B36: the device policies tab).
+        // Before the tab's state exists (page start) there is nothing to redraw.
+        try { renderDevicePolicies(); } catch (_) {}
     }
     
     /**
@@ -2645,6 +2862,9 @@
             // case 'devices': — DISABLED
             //     loadDevices();
             //     break;
+            case 'devpolicy':
+                loadDevicePolicies();
+                break;
             case 'server':
                 loadSSServerStatus();
                 loadVpnLanAccess();
@@ -4004,6 +4224,7 @@
         
         let health = 'unknown';
         if (live && status === 'down') health = 'down';
+        else if (live && status === 'returning') health = 'returning';
         else if (live && row.delay != null) health = 'ok';
         
         let badge;
@@ -4015,6 +4236,7 @@
         let delay = pendingAdd ? '' : '—';
         if (row.check_error) delay = t(row.check_error === 'timeout' ? 'multi.errTimeout' : 'multi.errFailed');
         else if (health === 'down') delay = t('multi.statusDown');
+        else if (health === 'returning') delay = t('multi.statusReturning');
         else if (live && row.delay != null) delay = `${row.delay} ${t('multi.ms')}`;
         else if (live && status === 'unknown') delay = t('multi.statusUnknown');
         
@@ -5956,6 +6178,130 @@
         updatePollTimer = null;
     }
 
+    // ============================================
+    // Device policies in the router firmware (B36)
+    // ============================================
+    const devpolicyState = { data: null, editing: {} };
+
+    function devpolicyWebUi(path) {
+        const port = devpolicyState.data?.webui_port || 80;
+        return `http://${location.hostname}${port === 80 ? '' : ':' + port}/${path}`;
+    }
+
+    // What the row's button does now: create, up to date, save new port, fix the router
+    function devpolicyRowState(p) {
+        const edited = devpolicyState.editing[p.key];
+        if (edited !== undefined && String(edited) !== String(p.port)) return 'save';
+        if (!p.policy || !p.connection) return 'create';
+        if (p.router_port && p.router_port !== p.port) return 'fix';
+        return 'ok';
+    }
+
+    function renderDevicePolicies() {
+        const body = $('#devpolicy-body');
+        const data = devpolicyState.data;
+        if (!body || !data) return;
+        if (!data.component) {
+            body.innerHTML = `
+                <div class="devpolicy-need">
+                    <strong>${escapeHtml(t('devpolicy.needTitle'))}</strong> ${escapeHtml(t('devpolicy.needText'))}
+                    <ol>
+                        <li>${t('devpolicy.need1', { link: `<a href="${devpolicyWebUi('system')}" target="_blank" rel="noopener">${escapeHtml(t('devpolicy.need1Link'))}</a>` })}</li>
+                        <li>${escapeHtml(t('devpolicy.need2'))}</li>
+                        <li>${escapeHtml(t('devpolicy.need3'))}</li>
+                    </ol>
+                </div>`;
+            return;
+        }
+        const link = (path, key) => `<a href="${devpolicyWebUi(path)}" target="_blank" rel="noopener">${escapeHtml(t(key))}</a> — ${escapeHtml(t(key + 'Path'))}`;
+        const rows = (data.policies || []).map(p => {
+            const state = devpolicyRowState(p);
+            const editing = devpolicyState.editing[p.key] !== undefined;
+            let sub;
+            if (state === 'save' && p.connection) sub = `<div class="devpolicy-sub warn">${escapeHtml(t('devpolicy.portWillChange', { old: p.router_port ?? p.port, new: devpolicyState.editing[p.key] }))}</div>`;
+            else if (!p.policy || !p.connection) sub = `<div class="devpolicy-sub">${escapeHtml(t('devpolicy.notInRouter'))}</div>`;
+            else if (state === 'fix') sub = `<div class="devpolicy-sub warn">${escapeHtml(t('devpolicy.wrongPort', { port: p.router_port }))}</div>`;
+            else sub = `<div class="devpolicy-sub ok">${escapeHtml(t('devpolicy.inRouter', { name: p.name }))}</div>`;
+            const btn = {
+                create: `<button class="btn btn-primary btn-sm devpolicy-act" data-devpolicy-do="apply" data-key="${p.key}">${escapeHtml(t('devpolicy.btnCreate'))}</button>`,
+                ok: `<button class="btn btn-secondary btn-sm devpolicy-act" disabled title="${escapeHtml(t('devpolicy.btnUpToDateHint'))}">${escapeHtml(t('devpolicy.btnUpToDate'))}</button>`,
+                save: `<button class="btn btn-primary btn-sm devpolicy-act" data-devpolicy-do="save" data-key="${p.key}">${escapeHtml(t('devpolicy.btnSave'))}</button>`,
+                fix: `<button class="btn btn-primary btn-sm devpolicy-act" data-devpolicy-do="apply" data-key="${p.key}">${escapeHtml(t('devpolicy.btnFix'))}</button>`
+            }[state];
+            const hasAny = p.policy || p.connection;
+            const del = `<button class="btn btn-sm btn-icon devpolicy-del" data-devpolicy-do="remove" data-key="${p.key}" ${hasAny ? '' : 'disabled'}
+                title="${escapeHtml(t(hasAny ? 'devpolicy.btnDelete' : 'devpolicy.btnDeleteNone'))}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>`;
+            const edit = editing ? `
+                <div class="devpolicy-edit"><div class="warning-box warning-box-sm">
+                    <p>${t('devpolicy.portsWarning')}</p>
+                    <div class="devpolicy-edit-line">${escapeHtml(t('devpolicy.newPort'))}
+                        <input type="number" min="1024" max="65535" class="input-sm" data-devpolicy-port="${p.key}" value="${escapeHtml(String(devpolicyState.editing[p.key]))}">
+                        <button type="button" data-devpolicy-do="cancel" data-key="${p.key}">${escapeHtml(t('devpolicy.cancel'))}</button>
+                    </div></div></div>` : '';
+            return `
+                <div class="devpolicy-row">
+                    <div class="devpolicy-info">
+                        <div class="devpolicy-name">${escapeHtml(t('devpolicy.p.' + p.key))}</div>
+                        ${sub}
+                        <div class="devpolicy-port">${escapeHtml(t('devpolicy.port', { port: p.port }))}${editing ? '' : `<button type="button" data-devpolicy-do="edit" data-key="${p.key}">${escapeHtml(t('devpolicy.edit'))}</button>`}</div>
+                    </div>
+                    ${btn}${del}${edit}
+                </div>`;
+        }).join('');
+        const openDevices = $('#devpolicy-open-devices');
+        if (openDevices) openDevices.href = devpolicyWebUi('devicesList');
+        body.innerHTML = `
+            <div class="devpolicy-links"><strong>${escapeHtml(t('devpolicy.whereTitle'))}</strong><br>
+                • ${link('otherConnections', 'devpolicy.linkConnections')}<br>
+                • ${link('policies', 'devpolicy.linkPolicies')}<br>
+                • ${link('devicesList', 'devpolicy.linkDevices')}
+            </div>
+            <div class="devpolicy-list">${rows}</div>`;
+    }
+
+    async function loadDevicePolicies() {
+        devpolicyState.editing = {};
+        try {
+            const response = await api('/devpolicy.cgi');
+            if (response.success) { devpolicyState.data = response.data || {}; renderDevicePolicies(); }
+        } catch (error) {
+            const body = $('#devpolicy-body');
+            if (body) body.textContent = error.message || t('errors.unknown');
+        }
+    }
+
+    async function devpolicyAction(action, key, button) {
+        if (action === 'edit') {
+            const p = (devpolicyState.data?.policies || []).find(x => x.key === key);
+            devpolicyState.editing[key] = p ? p.port : '';
+            return renderDevicePolicies();
+        }
+        if (action === 'cancel') { delete devpolicyState.editing[key]; return renderDevicePolicies(); }
+        if (action === 'remove' && !confirm(t('devpolicy.deleteConfirm', { name: t('devpolicy.p.' + key) }))) return;
+        if (button) {
+            button.disabled = true;
+            // the router takes 5-15 s (its rules are rebuilt): show that it is working
+            if (button.classList.contains('devpolicy-act')) button.innerHTML = '<span class="btn-spinner"></span>';
+        }
+        try {
+            let response;
+            if (action === 'save') {
+                const port = parseInt(devpolicyState.editing[key], 10);
+                response = await api('/devpolicy.cgi/ports', { method: 'POST', body: JSON.stringify({ ports: { [key]: port } }) });
+                delete devpolicyState.editing[key];
+            } else {
+                response = await api(`/devpolicy.cgi/${action}`, { method: 'POST', body: JSON.stringify({ key }) });
+            }
+            devpolicyState.data = response.data || devpolicyState.data;
+            renderDevicePolicies();
+            showToast(t(action === 'remove' ? 'devpolicy.removed' : 'devpolicy.done'), 'success');
+        } catch (error) {
+            renderDevicePolicies();
+            showToast(error.message === 'component_missing' ? t('devpolicy.needTitle') : (error.message || t('errors.unknown')), 'error', 8000);
+        }
+    }
+
     async function loadUpdateSettings() {
         try {
             const response = await api('/update.cgi');
@@ -6415,6 +6761,23 @@
         }
         
         // Lists source save button (FEAT-200)
+        // Device policies (B36): one delegated handler for the rows
+        const devpolicyBody = $('#devpolicy-body');
+        devpolicyBody?.addEventListener('click', (e) => {
+            const el = e.target.closest('[data-devpolicy-do]');
+            if (el) devpolicyAction(el.dataset.devpolicyDo, el.dataset.key, el);
+        });
+        devpolicyBody?.addEventListener('input', (e) => {
+            const el = e.target.closest('[data-devpolicy-port]');
+            if (!el) return;
+            devpolicyState.editing[el.dataset.devpolicyPort] = el.value;
+            // re-render without losing the focus: only the button and the status line change
+            const pos = el.selectionStart;
+            renderDevicePolicies();
+            const again = $(`[data-devpolicy-port="${el.dataset.devpolicyPort}"]`);
+            if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (_) {} }
+        });
+
         // Updates (B2)
         const btnUpdateCheck = $('#btn-update-check');
         if (btnUpdateCheck) {
@@ -7248,11 +7611,11 @@
             });
         }
         
-        // VPN Server Port Change (FEAT-201)
-        const btnChangeServerPort = $('#btn-change-server-port');
-        if (btnChangeServerPort) {
+        // VPN Server Port Change (FEAT-201; B38: one row per connection type)
+        document.querySelectorAll('[data-port-type]').forEach(btnChangeServerPort => {
             btnChangeServerPort.addEventListener('click', () => {
-                const portInput = $('#server-port-input');
+                const ptype = btnChangeServerPort.dataset.portType;
+                const portInput = $(`#server-port-${ptype}`);
                 const newPort = portInput?.value;
                 
                 if (!newPort) {
@@ -7267,11 +7630,12 @@
                 }
                 
                 // Confirmation dialog with warning
-                if (confirm(t('server.portChangeWarning').replace('{port}', port))) {
-                    changeServerPort(port, btnChangeServerPort);
+                const typeName = t({ws: 'server.portLabelWs', tls: 'server.portLabelTls', xhttp: 'server.portLabelXhttp', reality: 'server.portLabelReality'}[ptype]);
+                if (confirm(t('server.portChangeWarningType').replace('{type}', typeName).replace('{port}', port))) {
+                    changeServerPort(port, btnChangeServerPort, ptype);
                 }
             });
-        }
+        });
         
         // Rename user form
         const ssUserRenameForm = $('#ssuser-rename-form');
@@ -7529,11 +7893,18 @@
         const credentials = $('#ssserver-credentials');
         const users = $('#ssserver-users');
         
-        // Update port input (FEAT-201)
-        const portInput = $('#server-port-input');
-        if (portInput && state.ssserver.server_port) {
-            portInput.value = state.ssserver.server_port;
-        }
+        // Update port inputs (FEAT-201, B38)
+        const srv = state.ssserver || {};
+        const ports = {
+            ws: srv.server_port || 8388,
+            reality: (srv.reality && srv.reality.port) || 8443,
+            tls: (srv.tls && srv.tls.ws_port) || 8444,
+            xhttp: (srv.tls && srv.tls.xhttp_port) || 8445
+        };
+        Object.keys(ports).forEach(k => {
+            const el = $(`#server-port-${k}`);
+            if (el && document.activeElement !== el) el.value = ports[k];
+        });
         
         if (!state.ssserver.configured) {
             if (credentials) credentials.innerHTML = `<p class="text-muted">${t('server.notConfigured')}</p>`;
@@ -8499,8 +8870,8 @@
     // VPN Server Port Management (FEAT-201)
     // ============================================
     
-    async function changeServerPort(newPort, btnEl) {
-        const btn = btnEl || $('#btn-change-server-port');
+    async function changeServerPort(newPort, btnEl, ptype = 'ws') {
+        const btn = btnEl || $('[data-port-type="ws"]');
         
         if (btn) {
             btn.disabled = true;
@@ -8512,7 +8883,7 @@
             const response = await fetch(`${CONFIG.API_BASE}/vpnserver.cgi/change-port`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ port: parseInt(newPort) })
+                body: JSON.stringify({ port: parseInt(newPort), type: ptype })
             });
             const data = await response.json();
             

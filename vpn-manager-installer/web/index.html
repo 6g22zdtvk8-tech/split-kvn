@@ -225,6 +225,13 @@
                 </svg>
                 <span data-i18n="tab.domains">Domains</span>
             </button>
+            <button class="tab" data-tab="devpolicy">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="5" y="2" width="14" height="20" rx="2"/>
+                    <line x1="12" y1="18" x2="12.01" y2="18"/>
+                </svg>
+                <span data-i18n="tab.devpolicy">Device policies</span>
+            </button>
             <div class="tab-separator"></div>
             <button class="tab" data-tab="server">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -929,6 +936,53 @@
             </section>
 
             <!-- VPN Server Tab -->
+            <!-- B36: device policies in the router firmware -->
+            <section id="tab-devpolicy" class="tab-content">
+                <div class="section">
+                    <div class="section-header"><h2 data-i18n="devpolicy.title">Device policies</h2></div>
+                    <p class="section-description" data-i18n="devpolicy.intro">Here our routing modes become available in the router's own control panel. There you can give any device — a phone, a laptop, a TV — its own policy, no matter how and where it is connected.</p>
+                    <div class="devpolicy-cards">
+                        <div><b data-i18n="devpolicy.p.fullvpn">VPN only</b><span data-i18n="devpolicy.d.fullvpn">Everything through the VPN. No VPN — no internet.</span></div>
+                        <div><b data-i18n="devpolicy.p.vpnprimary">VPN primary</b><span data-i18n="devpolicy.d.vpnprimary">Russian sites direct, the rest through the VPN.</span></div>
+                        <div><b data-i18n="devpolicy.p.split">Direct primary</b><span data-i18n="devpolicy.d.split">Sites from the VPN list through the VPN, the rest direct.</span></div>
+                        <div><b data-i18n="devpolicy.p.direct">Direct</b><span data-i18n="devpolicy.d.direct">Everything direct, the VPN is not used.</span></div>
+                    </div>
+                </div>
+                <div class="section">
+                    <div class="section-header"><h2 data-i18n="devpolicy.h1">1. Policies in the router</h2></div>
+                    <div id="devpolicy-body"></div>
+                </div>
+                <div class="section">
+                    <div class="section-header"><h2 data-i18n="devpolicy.h2">2. How to put a device on a policy</h2></div>
+                    <div class="devpolicy-steps">
+                        <div class="devpolicy-step">
+                            <h3 data-i18n="devpolicy.s1">Step 1. Open the client list in the router control panel</h3>
+                            <p><a id="devpolicy-open-devices" href="#" target="_blank" rel="noopener" data-i18n="devpolicy.s1link">Open the client list →</a> <span data-i18n="devpolicy.s1hint">(new tab). You need the router administrator login and password.</span></p>
+                            <img src="img/devpolicy-1.jpg" alt="" loading="lazy">
+                        </div>
+                        <div class="devpolicy-step">
+                            <h3 data-i18n="devpolicy.s2">Step 2. Click the device</h3>
+                            <p data-i18n="devpolicy.s2hint">The device must be in "Registered clients". If it is not there, register it first (it may be listed under the unregistered ones).</p>
+                            <img src="img/devpolicy-2.jpg" alt="" loading="lazy">
+                        </div>
+                        <div class="devpolicy-step">
+                            <h3 data-i18n="devpolicy.s3">Step 3. Choose a "SplitKVN …" access policy</h3>
+                            <p data-i18n="devpolicy.s3hint">The change is saved at once.</p>
+                            <img src="img/devpolicy-3.jpg" alt="" loading="lazy">
+                        </div>
+                        <div class="devpolicy-step">
+                            <h3 data-i18n="devpolicy.s4">Step 4. Cable and Wi-Fi are two devices for the router</h3>
+                            <p data-i18n="devpolicy.s4a">Anything that can connect both ways — a laptop, a computer, a TV, a TV box — has one address for cable and another for Wi-Fi: give the policy to both, even if right now it is connected only one way.</p>
+                            <p data-i18n="devpolicy.s4b">iPhone, iPad, Mac and Android use a different "private" address in each Wi-Fi network by default. Turn it off for the home network, or the router will not recognise the device: iPhone/iPad — Settings → Wi-Fi → (i) next to the network → Private Wi-Fi Address → Off; Mac — System Settings → Wi-Fi → Details → Private Wi-Fi address → Off; Android — Wi-Fi → network → Privacy → Use device MAC.</p>
+                        </div>
+                        <div class="devpolicy-step">
+                            <h3 data-i18n="devpolicy.s5">How to check</h3>
+                            <p data-i18n="devpolicy.s5a">On the device open 2ip.ru and any foreign "what is my IP" site. With "VPN primary" 2ip.ru shows your home address and the foreign site shows the VPN address.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section id="tab-server" class="tab-content">
                 <div class="section">
                     <div class="section-header">
@@ -947,18 +1001,34 @@
                     <div class="section-block">
                         <h3 data-i18n="server.port">Server Port</h3>
                         <div class="form-group">
-                            <label for="server-port-input" data-i18n="server.portLabel">VPN Server Port</label>
+                            <label for="server-port-ws" data-i18n="server.portLabelWs">Standard (WebSocket)</label>
                             <div class="input-group">
-                                <input type="number" id="server-port-input" 
-                                       min="1024" max="65535" 
-                                       placeholder="8388"
-                                       class="input-sm">
-                                <button type="button" id="btn-change-server-port" class="btn btn-primary btn-sm" data-i18n="settings.changePort">
-                                    Change
-                                </button>
+                                <input type="number" id="server-port-ws" min="1024" max="65535" placeholder="8388" class="input-sm">
+                                <button type="button" class="btn btn-primary btn-sm" data-port-type="ws" data-i18n="settings.changePort">Change</button>
                             </div>
-                            <small class="form-hint" data-i18n="server.portHint">Valid values: 1024-65535. After changing port, all connected VPN clients will lose connection and need to reconnect with new port.</small>
                         </div>
+                        <div class="form-group">
+                            <label for="server-port-tls" data-i18n="server.portLabelTls">TLS (WebSocket)</label>
+                            <div class="input-group">
+                                <input type="number" id="server-port-tls" min="1024" max="65535" placeholder="8444" class="input-sm">
+                                <button type="button" class="btn btn-primary btn-sm" data-port-type="tls" data-i18n="settings.changePort">Change</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="server-port-xhttp" data-i18n="server.portLabelXhttp">TLS (xhttp)</label>
+                            <div class="input-group">
+                                <input type="number" id="server-port-xhttp" min="1024" max="65535" placeholder="8445" class="input-sm">
+                                <button type="button" class="btn btn-primary btn-sm" data-port-type="xhttp" data-i18n="settings.changePort">Change</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="server-port-reality" data-i18n="server.portLabelReality">Reality</label>
+                            <div class="input-group">
+                                <input type="number" id="server-port-reality" min="1024" max="65535" placeholder="8443" class="input-sm">
+                                <button type="button" class="btn btn-primary btn-sm" data-port-type="reality" data-i18n="settings.changePort">Change</button>
+                            </div>
+                        </div>
+                        <small class="form-hint" data-i18n="server.portHint">Valid values: 1024-65535. After a change, users of that type lose the connection: their links and QR codes change and must be sent again. The router's port forward moves by itself.</small>
                     </div>
 
                     <!-- Access of VPN-server clients to the panel and the home network (B8) -->

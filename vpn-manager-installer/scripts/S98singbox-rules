@@ -85,6 +85,13 @@ prepare_mark_chain() {
         fi || { echo "  WARNING: $new is live and could not be released"; return 1; }
     fi
     $ipt -t mangle -N "$new" 2>/dev/null || $ipt -t mangle -F "$new"
+    # B36: a device on one of our device policies (firmware mark) is routed by that
+    # policy in sing-box; the segment rules must not overrule it
+    local m
+    for m in $("$VPN_MANAGER_HOME/scripts/keenetic-policies.sh" marks 2>/dev/null | awk '{print $2}'); do
+        case "$m" in *[!0-9a-fA-F]*|'') continue ;; esac
+        $ipt -t mangle -A "$new" -m mark --mark "0x$m" -j RETURN
+    done
 }
 
 # Put chain ${2}_NEW in place of $2, then let it take over the name.
