@@ -1911,6 +1911,34 @@ cleanup_legacy_components() {
 # house, and only the init scripts can require one; the caller is told when that
 # is the case and decides. B2 (automatic updates) will drive the restart itself,
 # with a backup taken first and a rollback if the check fails.
+# The AmneziaWG padding cap (16 bytes) is needed only on the stock engine. With our
+# build (version "-skvn") the kept config gets each server's full padding back from
+# its file, so an update lifts the cap without waiting for the next config rebuild.
+# Prints "changed" when it rewrote the config.
+lift_awg_padding_cap() {
+    /opt/bin/sing-box version 2>/dev/null | head -1 | grep -q -- '-skvn' || return 0
+    [ -s "$SINGBOX_CONFIG" ] || return 0
+    local active=$(cat "$VPN_MANAGER_HOME/active-config" 2>/dev/null)
+    local work="/tmp/awg-pad.$$" tmp="/tmp/awg-pad.$$.tmp" tag id src want
+    cp "$SINGBOX_CONFIG" "$work"
+    for tag in $(jq -r '.endpoints[]? | select((.amnezia.content_padding_addition // null) != null) | .tag' "$work" 2>/dev/null); do
+        case "$tag" in m-*) id="${tag#m-}" ;; *) id="$active" ;; esac
+        src="$VPN_MANAGER_HOME/configs/$id.json"
+        [ -f "$src" ] || continue
+        want=$(jq -r '(.content_padding_addition // .amnezia.content_padding_addition // "") | tostring' "$src" 2>/dev/null)
+        [ -n "$want" ] && [ "$want" != "0" ] || continue
+        jq --arg t "$tag" --arg v "$want" '(.endpoints[] | select(.tag == $t) | .amnezia.content_padding_addition) = $v' "$work" > "$tmp" \
+            && [ -s "$tmp" ] && mv "$tmp" "$work"
+    done
+    rm -f "$tmp"
+    if ! cmp -s "$work" "$SINGBOX_CONFIG" && /opt/bin/sing-box check -c "$work" >/dev/null 2>&1; then
+        cat "$work" > "$SINGBOX_CONFIG"
+        log_ok "AmneziaWG: full padding (our sing-box build)" >&2
+        echo changed
+    fi
+    rm -f "$work"
+}
+
 run_update() {
     check_root
 
@@ -1957,6 +1985,7 @@ run_update() {
 
     # The kept config.json is moved to the sing-box 1.14 format by the new panel code
     migrate_existing_singbox_config
+    local awg_pad=$(lift_awg_padding_cap | tail -1)
     echo ""
 
     log_info "=== Service scripts ==="
@@ -1983,6 +2012,10 @@ run_update() {
         else
             log_error "sing-box did not start — check: /opt/bin/sing-box check -c $SINGBOX_CONFIG"
         fi
+    elif [ "$awg_pad" = "changed" ] && [ -x /opt/etc/init.d/S99sing-box ]; then
+        # same engine, but the AmneziaWG padding changed: the running sing-box reloads it
+        /opt/etc/init.d/S99sing-box restart >/dev/null 2>&1
+        SKIP_WARMUP=1 /opt/etc/init.d/S98singbox-rules start 0 >/dev/null 2>&1
     fi
 
     # The panel is plain files served by lighttpd: new code is live as soon as it
