@@ -289,6 +289,11 @@
             'notices.missingTitle': 'The provider no longer lists this server. It keeps working and is removed if it does not come back within a day.',
             'multi.statusMain': 'Main',
             'multi.statusReserve': 'Reserve',
+            'multi.strategyPrimary': 'Main server',
+            'multi.strategyFastest': 'Fastest',
+            'multi.strategyPrimaryHint': 'Traffic goes through the main server; the others step in when it fails.',
+            'multi.strategyFastestHint': 'Traffic goes through the fastest server: the router measures all of them every minute and switches only when another one is clearly faster.',
+            'multi.strategySet': 'Mode changed',
             'multi.statusDown': 'Not responding',
             'multi.statusReturning': 'Moving traffic back…',
             'multi.errTimeout': 'No answer (timeout)',
@@ -877,6 +882,9 @@
             'subscription.addedToast': 'Subscription added ({count} servers)',
             'subscription.updatedToast': 'Subscription updated ({count} servers)',
             'subscription.deleteTitle': 'Delete subscription',
+            'subscription.rename': 'Rename',
+            'subscription.renamePrompt': 'New name for the subscription:',
+            'subscription.renamed': 'Subscription renamed',
             'subscription.deleteMessage': 'Delete subscription "{name}" and all its servers?',
             
             // Config delete
@@ -1424,6 +1432,11 @@
             'notices.missingTitle': 'Провайдер больше не отдаёт этот сервер. Он продолжает работать и будет удалён, если не вернётся за сутки.',
             'multi.statusMain': 'Главный',
             'multi.statusReserve': 'Запасной',
+            'multi.strategyPrimary': 'Главный сервер',
+            'multi.strategyFastest': 'Самый быстрый',
+            'multi.strategyPrimaryHint': 'Трафик идёт через главный сервер, остальные подхватывают, если он упал.',
+            'multi.strategyFastestHint': 'Трафик идёт через самый быстрый сервер: роутер меряет все раз в минуту и переключается, только если другой заметно быстрее.',
+            'multi.strategySet': 'Режим изменён',
             'multi.statusDown': 'Не отвечает',
             'multi.statusReturning': 'Возвращаем трафик…',
             'multi.errTimeout': 'Нет ответа (таймаут)',
@@ -2164,6 +2177,9 @@
             'subscription.addedToast': 'Подписка добавлена ({count} серверов)',
             'subscription.updatedToast': 'Подписка обновлена ({count} серверов)',
             'subscription.deleteTitle': 'Удалить подписку',
+            'subscription.rename': 'Переименовать',
+            'subscription.renamePrompt': 'Новое имя подписки:',
+            'subscription.renamed': 'Подписка переименована',
             'subscription.deleteMessage': 'Удалить подписку "{name}" и все её серверы?',
 
             'warning.listEmpty': 'Список пуст',
@@ -3114,6 +3130,12 @@
                             <span class="subscription-count">+${subConfigs.length - (hasActiveServer ? 1 : 0)} ${t('vpn.servers').toLowerCase()}</span>
                         ` : ''}
                         <div class="subscription-actions">
+                            <button class="btn btn-sm btn-icon" data-action="rename-sub" title="${t('subscription.rename')}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
                             <button class="btn btn-sm btn-icon" data-action="refresh" title="${t('success.updated')}">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10"/>
@@ -3161,6 +3183,11 @@
             group.querySelector('[data-action="delete-sub"]')?.addEventListener('click', (e) => {
                 e.stopPropagation();
                 deleteSubscription(subId);
+            });
+            
+            group.querySelector('[data-action="rename-sub"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                renameSubscription(subId);
             });
         });
         
@@ -3889,7 +3916,7 @@
         const eff = multiEffectiveById(config.id);
         if (!eff || !multiState.running) return '';
         let html = '';
-        if (String(eff.id) === String(multiState.primary)) {
+        if (String(eff.id) === String(multiState.primary) && multiState.strategy !== 'fastest') {
             html += `<span class="multi-badge main">${t('multi.statusMain')}</span>`;
         }
         if (eff.carrying) {
@@ -4017,6 +4044,7 @@
         multiState.mode = data.mode === 'multi' ? 'multi' : 'single';
         multiState.limit = parseInt(data.limit, 10) || 32;
         multiState.primary = data.primary ? String(data.primary) : '';
+        multiState.strategy = data.strategy === 'fastest' ? 'fastest' : 'primary';
         multiState.members = Array.isArray(data.members) ? data.members.map(String) : [];
         multiState.subscriptions = Array.isArray(data.subscriptions) ? data.subscriptions.map(String) : [];
         multiState.effective = Array.isArray(data.effective) ? data.effective : [];
@@ -4142,6 +4170,25 @@
         }
     }
     
+    // B42: main server leads / the fastest leads (sing-box restarts, 2–3 s)
+    async function multiSetStrategy(strategy) {
+        if (strategy === multiState.strategy || multiState.settingStrategy) return;
+        multiState.settingStrategy = strategy;
+        renderMultiUI();
+        const loader = $('#multi-loader');
+        if (loader) loader.classList.remove('hidden');
+        try {
+            multiApplyState(await multiPost('/strategy', { strategy }));
+            showToast(t('multi.strategySet'), 'success');
+        } catch (e) {
+            showToast(multiErrorText(e), 'error');
+        } finally {
+            multiState.settingStrategy = null;
+            if (loader) loader.classList.add('hidden');
+            renderMultiUI();
+        }
+    }
+
     async function multiCheckOne(id) {
         if (multiState.checking || multiState.checkingId) return;
         multiState.checkingId = String(id);
@@ -4216,7 +4263,9 @@
     
     function renderMultiRow(row) {
         const id = String(row.id);
-        const isPrimary = id === String((multiState.draft || multiState).primary);
+        // B42 "fastest": no main server, no "Make main" button
+        const fastest = multiState.strategy === 'fastest';
+        const isPrimary = !fastest && id === String((multiState.draft || multiState).primary);
         const status = row.status || 'unknown';
         const pendingAdd = row.pending === 'add';
         const pendingRemove = row.pending === 'remove';
@@ -4266,7 +4315,7 @@
         let slot = '<span class="multi-slot"></span>';
         if (row.carrying && live) {
             slot = `<span class="multi-slot multi-traffic" title="${escapeHtml(t('multi.carryingTitle'))}"><span class="multi-carry-dot"></span>${t('multi.carrying')}</span>`;
-        } else if (!isPrimary) {
+        } else if (!isPrimary && !fastest) {
             slot = `<button class="btn btn-sm btn-secondary multi-slot multi-make-main" data-multi-primary="${escapeHtml(id)}"
                 ${pendingRemove ? 'disabled' : ''}>${t('multi.makePrimary')}</button>`;
         }
@@ -4366,9 +4415,10 @@
         
         const list = $('#multi-list');
         if (list) {
-            // The main server always heads the list
+            // The main server always heads the list; in "fastest" — the one carrying traffic
             const mainId = String((multiState.draft || multiState).primary);
-            const ordered = [...rows].sort((a, b) => (String(b.id) === mainId) - (String(a.id) === mainId));
+            const head = r => multiState.strategy === 'fastest' ? !!r.carrying : String(r.id) === mainId;
+            const ordered = [...rows].sort((a, b) => head(b) - head(a));
             list.innerHTML = ordered.length
                 ? ordered.map(renderMultiRow).join('')
                 : `<div class="multi-empty">${t('multi.empty')}</div>`;
@@ -4382,6 +4432,18 @@
                 b.addEventListener('click', () => multiToggleServer(b.dataset.multiUndo, true)));
         }
         
+        const strat = $('#multi-strategy');
+        if (strat) {
+            strat.querySelectorAll('[data-multi-strategy]').forEach(b => {
+                const active = b.dataset.multiStrategy === multiState.strategy;
+                b.classList.toggle('active', active);
+                b.setAttribute('aria-checked', active ? 'true' : 'false');
+                b.disabled = multiState.applying || !!multiState.settingStrategy;
+            });
+            const hint = $('#multi-strategy-hint');
+            if (hint) hint.textContent = t(multiState.strategy === 'fastest' ? 'multi.strategyFastestHint' : 'multi.strategyPrimaryHint');
+        }
+
         const checkBtn = $('#multi-check-btn');
         if (checkBtn) {
             checkBtn.disabled = multiState.checking || multiState.applying || !multiState.effective.length;
@@ -4429,6 +4491,9 @@
             btn.addEventListener('click', () => multiSwitchMode(btn.dataset.multiMode));
         });
         $('#multi-check-btn')?.addEventListener('click', multiCheckNow);
+        $$('#multi-strategy [data-multi-strategy]').forEach(btn => {
+            btn.addEventListener('click', () => multiSetStrategy(btn.dataset.multiStrategy));
+        });
         $('#multi-apply-btn')?.addEventListener('click', multiApply);
         $('#multi-reset-btn')?.addEventListener('click', multiResetDraft);
     }
@@ -5140,6 +5205,23 @@
             showToast(t(err.message) || t('errors.subscriptionUpdate'), 'error');
         } finally {
             if (refreshBtn) refreshBtn.classList.remove('spinning');
+        }
+    }
+    
+    // B41: rename a subscription (the name shown in the panel; the link stays)
+    async function renameSubscription(subId) {
+        const sub = state.subscriptions?.find(s => s.id === subId);
+        const name = prompt(t('subscription.renamePrompt'), sub?.name || '');
+        if (name === null) return;
+        const clean = name.replace(/["\\]/g, '').trim().slice(0, 64);
+        if (!clean || clean === sub?.name) return;
+        try {
+            await api(`/subscriptions.cgi/${subId}`, { method: 'PUT', body: JSON.stringify({ name: clean }) });
+            showToast(t('subscription.renamed'), 'success');
+            loadSubscriptions();
+            loadConfigs();
+        } catch (err) {
+            showToast(t(err.message) || t('errors.saving'), 'error');
         }
     }
     

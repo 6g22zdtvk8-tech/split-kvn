@@ -6,6 +6,7 @@
 #   POST /api/multi.cgi/primary    {"id":"id"}           (no sing-box restart)
 #   POST /api/multi.cgi/check      re-check every server now
 #   POST /api/multi.cgi/check-one  {"id":"id"} re-check one server now
+#   POST /api/multi.cgi/strategy   {"strategy":"primary"|"fastest"} (B42; restarts sing-box)
 #   POST /api/multi.cgi/notices    clear the notices about vanished servers (B28)
 
 export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin"
@@ -101,6 +102,22 @@ case "$REQUEST_METHOD" in
                 set_active_config "$ID"
                 multi_is_on && multi_set_primary_live "$ID"
                 log_action "MULTI" "Main server: $ID"
+                respond_state
+                ;;
+
+            strategy)
+                # B42: "primary" — the main server leads; "fastest" — the fastest server
+                # by sing-box's check every minute leads (needs a restart, 2–3 s)
+                STRATEGY=$(printf '%s' "$BODY" | jq -r '.strategy // empty')
+                case "$STRATEGY" in primary|fastest) ;; *) json_error "Unknown strategy" 400; exit 0 ;; esac
+                if [ "$(printf '%s' "$STATE" | jq -r '.strategy')" != "$STRATEGY" ]; then
+                    multi_save "$(printf '%s' "$STATE" | jq -c --arg s "$STRATEGY" '.strategy = $s')" || { json_error "Cannot save" 500; exit 0; }
+                    if multi_is_on; then
+                        apply_multi_config || { multi_save "$STATE"; json_error "multi.errors.apply" 500; exit 0; }
+                        multi_restart_vpn || { json_error "multi.errors.start" 500; exit 0; }
+                    fi
+                    log_action "MULTI" "Strategy: $STRATEGY"
+                fi
                 respond_state
                 ;;
 

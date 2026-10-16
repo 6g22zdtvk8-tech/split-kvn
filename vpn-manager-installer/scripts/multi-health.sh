@@ -24,6 +24,8 @@ OKS_TO_RETURN=2
 log() { logger -t multi-health "$*" 2>/dev/null; return 0; }
 
 jq -e '.mode == "multi"' "$MULTI_FILE" >/dev/null 2>&1 || exit 0
+# "fastest" (B42): no main server to watch, sing-box picks the server itself
+jq -e '.strategy == "fastest"' "$MULTI_FILE" >/dev/null 2>&1 && exit 0
 mkdir -p /tmp/vpn-manager
 [ -f "$LOCK" ] && [ $(( $(date +%s) - $(date -r "$LOCK" +%s 2>/dev/null || echo 0) )) -lt 120 ] && exit 0
 touch "$LOCK"

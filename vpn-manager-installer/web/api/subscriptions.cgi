@@ -1320,7 +1320,8 @@ case "$REQUEST_METHOD" in
         fi
         
         POST_DATA=$(read_post_data)
-        NAME=$(json_get_value "$POST_DATA" "name")
+        # the name goes into a jq expression: no quotes or backslashes, at most 64 characters (B41)
+        NAME=$(json_get_value "$POST_DATA" "name" | tr -d '"\\' | cut -c1-64)
         AUTO_UPDATE=$(json_get_bool "$POST_DATA" "auto_update")
         UPDATE_INTERVAL=$(json_get_number "$POST_DATA" "update_interval")
         

@@ -4,11 +4,44 @@
 # First installs Entware, then VPN Manager
 # =============================================================================
 
+# The firmware starts initrc with its own short PATH; wget and ping come from the
+# Entware bootstrap in /opt/bin (without this the internet check never succeeded)
+export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+
 log() {
     logger -t vpn-manager-initrc "$1"
 }
 
 log "initrc started"
+
+# The firmware gives initrc about 4 minutes and then kills it together with every
+# process it started ("Opkg::Manager: /opt/etc/initrc: timed out"). Installing Entware
+# from a slow mirror takes longer, so everything below runs in the background and
+# initrc returns at once (11.10.2026: an install was cut off at step 2 of 5).
+ENTWARE_MAIN="http://bin.entware.net/"
+ENTWARE_MIRROR="http://mirrors.bfsu.edu.cn/entware/"
+OPKG_CONF="/opt/etc/opkg.conf"
+
+# "opkg update" with a time limit: a throttled download never ends by itself
+opkg_update_try() {
+    /opt/bin/opkg update >/opt/tmp/opkg-check.log 2>&1 &
+    local pid=$! n=0
+    while kill -0 $pid 2>/dev/null; do
+        n=$((n + 1))
+        if [ $n -ge 90 ]; then
+            kill $pid 2>/dev/null; sleep 1; kill -9 $pid 2>/dev/null
+            echo "opkg update: no answer in 90 s" >> /opt/tmp/opkg-check.log
+            return 1
+        fi
+        sleep 1
+    done
+    wait $pid
+}
+
+use_entware_mirror() { grep -q "$ENTWARE_MAIN" "$OPKG_CONF" 2>/dev/null && sed -i "s|$ENTWARE_MAIN|$ENTWARE_MIRROR|g" "$OPKG_CONF"; }
+use_entware_main() { sed -i "s|$ENTWARE_MIRROR|$ENTWARE_MAIN|g" "$OPKG_CONF" 2>/dev/null; }
+
+setup() {
 
 # =============================================================================
 # Step 1: Install Entware (if not installed yet)
@@ -16,25 +49,59 @@ log "initrc started"
 
 # doinstall exists only until Entware installation is complete
 if [ -x /opt/etc/init.d/doinstall ]; then
-    log "Entware not installed, starting doinstall..."
-    
-    # doinstall runs /opt/bin/install in background and exits
-    /opt/etc/init.d/doinstall
-    
-    # Wait for install to complete (it removes itself at the end)
-    log "Waiting for Entware installation to complete..."
+    log "Entware not installed"
+
+    # The firmware starts us as soon as the drive is mounted, often before the router
+    # has internet: the Entware installer then fails at once on "opkg update" and just
+    # exits (11.10.2026). First wait until the package server answers (up to 15 min).
+    # The check is opkg itself, from the stick: wget and ping are not there yet at this
+    # point (the firmware has none, Entware brings them), so a check through them never
+    # passed (11.10.2026, the router waited with working internet).
+    # Some providers throttle bin.entware.net: small files pass, the package list hangs
+    # forever (11.10.2026). So every try has a time limit, and when the main server does
+    # not answer but the mirror does, opkg.conf is switched to the mirror for good.
+    mkdir -p /opt/lib/opkg /opt/tmp /opt/var/lock /opt/var/opkg-lists
     wait_count=0
-    while [ -f /opt/bin/install ]; do
-        sleep 5
-        wait_count=$((wait_count + 1))
-        # Timeout 10 minutes (120 * 5 sec)
-        if [ $wait_count -ge 120 ]; then
-            log "ERROR: Entware installation timeout"
-            exit 1
+    until opkg_update_try; do
+        if [ $wait_count -eq 0 ]; then
+            log "Waiting for internet (Entware package server)..."
+            log "opkg: $(tail -n 3 /opt/tmp/opkg-check.log 2>/dev/null | tr '\n' ' ' | cut -c1-200)"
         fi
+        if [ $((wait_count % 3)) -eq 2 ] && use_entware_mirror; then
+            if opkg_update_try; then
+                log "bin.entware.net does not answer, using the mirror $ENTWARE_MIRROR"
+                touch /opt/tmp/entware-mirror
+                break
+            fi
+            use_entware_main
+        fi
+        wait_count=$((wait_count + 1))
+        if [ $wait_count -ge 90 ]; then
+            log "WARNING: Entware package server still unreachable, trying anyway"
+            break
+        fi
+        sleep 10
     done
+
+    # The installer itself (no background: we are in the background already). It
+    # removes doinstall when it succeeds; on a failure it exits and doinstall stays —
+    # then try again, up to 5 times.
+    attempt=1
+    while [ -x /opt/etc/init.d/doinstall ] && [ $attempt -le 5 ]; do
+        log "Installing Entware, attempt $attempt..."
+        ( unset LD_BIND_NOW LD_LIBRARY_PATH LD_PRELOAD; /opt/bin/sh /opt/bin/install )
+        [ -x /opt/etc/init.d/doinstall ] || break
+        attempt=$((attempt + 1))
+        sleep 30
+    done
+    if [ -x /opt/etc/init.d/doinstall ]; then
+        log "ERROR: Entware installation failed 5 times — see the installer messages above"
+        exit 1
+    fi
     
     log "Entware installation complete"
+    # the packages may have brought their own opkg.conf: keep the mirror for our installer
+    [ -f /opt/tmp/entware-mirror ] && use_entware_mirror
     
     # Entware installer already registered rc.unslung as initrc
     # Remove ourselves to avoid conflicts
@@ -99,4 +166,8 @@ else
 fi
 
 log "initrc finished"
+}
+
+( setup ) </dev/null >/dev/null 2>&1 &
+log "initrc finished (setup continues in the background)"
 exit 0

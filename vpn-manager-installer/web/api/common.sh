@@ -479,6 +479,8 @@ list_configs() {
 #   vpn-main  selector: the main server; switched through the Clash API, no restart
 #   vpn-auto  urltest: the fastest of the ticked servers, re-checked every minute
 #   m-<id>    one outbound per ticked server
+# Strategy "fastest" (B42): no main server — vpn starts with vpn-auto, so traffic always
+# goes through the fastest server by the last check; on a failure the next ones in turn.
 # Everything else (lists, device policies, DNS, the VPN server) keeps pointing at "vpn".
 MULTI_FILE="$VPN_MANAGER_HOME/multi.json"
 MULTI_LIMIT=32
@@ -486,9 +488,10 @@ CLASH_API="http://127.0.0.1:9090"
 
 multi_state() {
     if [ -s "$MULTI_FILE" ] && jq -e 'type == "object"' "$MULTI_FILE" >/dev/null 2>&1; then
-        jq -c '{mode: (.mode // "single"), members: (.members // []), subscriptions: (.subscriptions // []), primary: (.primary // "")}' "$MULTI_FILE"
+        jq -c '{mode: (.mode // "single"), members: (.members // []), subscriptions: (.subscriptions // []), primary: (.primary // ""),
+                 strategy: (if .strategy == "fastest" then "fastest" else "primary" end)}' "$MULTI_FILE"
     else
-        echo '{"mode":"single","members":[],"subscriptions":[],"primary":""}'
+        echo '{"mode":"single","members":[],"subscriptions":[],"primary":"","strategy":"primary"}'
     fi
 }
 
@@ -612,7 +615,8 @@ apply_multi_config() {
             map({id: ., d: (($px["m-" + .].history // []) | if length > 0 then .[-1].delay else 0 end)})
             | (map(select(.d > 0)) | sort_by(.d) | .[0].id) // .[0].id' 2>/dev/null)
         [ -n "$primary" ] && [ "$primary" != "null" ] || primary=$(printf '%s\n' "$ids" | head -1)
-        if [ -n "$old_primary" ]; then
+        # "fastest" (B42) has no main server to announce
+        if [ -n "$old_primary" ] && [ "$(printf '%s' "$state" | jq -r '.strategy')" != "fastest" ]; then
             server_notice_add primary "$(jq -c -n --arg o "$old_primary" --arg n "$primary" \
                 --arg nn "$(jq -r '.name // ""' "$VPN_CONFIGS_DIR/$primary.json" 2>/dev/null)" '{old: $o, id: $n, name: $nn}')"
             log_action "MULTI" "Main server $old_primary is gone, main is now $primary"
@@ -646,14 +650,18 @@ apply_multi_config() {
         $tags | map({t: ., d: (($px.proxies[.].history // []) | if length > 0 then .[-1].delay else 0 end)})
         | map(. + {k: (if .d > 0 then .d else 999999 end)}) | sort_by(.k) | map(.t)')
 
-    items=$(jq -c -n --argjson items "$items" --argjson tags "$tags" --argjson tail "$tail_tags" --arg main "m-$primary" '
+    local strategy=$(printf '%s' "$state" | jq -r '.strategy')
+    items=$(jq -c -n --argjson items "$items" --argjson tags "$tags" --argjson tail "$tail_tags" --arg main "m-$primary" \
+            --arg strategy "$strategy" '
         $items + [
           {type: "selector", tag: "vpn-main", outbounds: $tags, default: $main},
           {type: "urltest",  tag: "vpn-auto", outbounds: $tags,
            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: 150, idle_timeout: "30m"},
           # After vpn-auto every server once more, one by one: right after the main
           # server dies, urltest may still point at it until its next check
-          {type: "fallback", tag: "vpn", outbounds: (["vpn-main", "vpn-auto"] + $tail), blacklist_timeout: "3m"}
+          # "fastest" (B42): the main server is skipped, the fastest leads
+          {type: "fallback", tag: "vpn", blacklist_timeout: "3m",
+           outbounds: ((if $strategy == "fastest" then ["vpn-auto"] else ["vpn-main", "vpn-auto"] end) + $tail)}
         ]') || return 1
 
     apply_singbox_vpn_items "vpn" "$items" || return 1
@@ -684,7 +692,16 @@ multi_restart_vpn() {
     singbox_restart
     sleep 1
     SKIP_WARMUP=1 "$SINGBOX_RULES_INIT" start 0 >/dev/null 2>&1
-    check_ss_running
+    check_ss_running || return 1
+    # A fresh install that starts with several connections has never downloaded the
+    # shared lists (single-server activation in vpn.cgi does it): fetch them once, in
+    # the background and outside sing-box's own scripts — lists-update restarts it (B40)
+    local rl="$VPN_MANAGER_HOME/remote-lists"
+    if [ ! -d "$rl" ] || [ -z "$(ls -A "$rl" 2>/dev/null)" ]; then
+        ( sleep 2; /opt/etc/vpn-manager/scripts/lists-update.sh force >/dev/null 2>&1; \
+          "$SINGBOX_RULES_INIT" warmup >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
+    fi
+    return 0
 }
 
 # Ticked servers of one subscription, with what identifies them: taken before a
@@ -833,12 +850,13 @@ multi_status_json() {
         | ($p["vpn-auto"].now // "") as $auto
         # the fallback says which group carries new connections: vpn-main, or
         # vpn-auto while the main server sits out after a failure
-        | ($p["vpn"].now // "vpn-main") as $fb
-        | ($fb != "vpn-main") as $main_out
+        | ($st.strategy == "fastest") as $fastest
+        | ($p["vpn"].now // (if $fastest then "vpn-auto" else "vpn-main" end)) as $fb
+        | ($fb != "vpn-main" and ($fastest | not)) as $main_out
         | (if $fb == "vpn-auto" then $auto elif $fb == "vpn-main" then $main else $fb end) as $carrier
         | def last_delay($t): ($p[$t].history // []) | if length > 0 then .[-1].delay else null end;
           def alive($t): ($p[$t].alive // null);
-        {mode: $st.mode, limit: $limit, primary: $st.primary, members: $st.members, notices: $notices,
+        {mode: $st.mode, strategy: $st.strategy, limit: $limit, primary: $st.primary, members: $st.members, notices: $notices,
            last_check: ([$eff.ids[] | ($p["m-" + .].history // []) | .[-1].time? // empty] | max),
            subscriptions: $st.subscriptions, truncated: $eff.truncated, running: $running,
            effective: [$eff.ids[] | . as $id | ("m-" + $id) as $t | last_delay($t) as $d
@@ -856,9 +874,9 @@ multi_status_json() {
                 # answers its own check it is not shown as down, only as "moving back"
                 status: (if $err != null or $d == 0 or alive($t) == false then "down"
                          elif $t == $main and $main_out then "returning"
-                         elif $t == $main then "primary"
+                         elif $t == $main and ($fastest | not) then "primary"
                          elif $d == null then "unknown" else "reserve" end),
-                main: ($t == $main),
+                main: ($t == $main and ($fastest | not)),
                 carrying: ($st.mode == "multi" and $t == $carrier)}]}
         | if .mode != "multi" then .effective = [] else . end'
 }

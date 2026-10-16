@@ -13,8 +13,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-VERSION="2.12.0"  # AmneziaWG support, sing-box Extended
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The release number lives in VERSION next to this script (the banner said 2.12.0 for years)
+VERSION="$(head -1 "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '\r\n')"
+[ -n "$VERSION" ] || VERSION="unknown"
 
 # Paths
 SINGBOX_CONFIG="/opt/etc/sing-box/config.json"
@@ -1700,6 +1702,13 @@ alias.url = (
 setenv.add-environment += (
     "VPN_MANAGER_HOME" => "/opt/etc/vpn-manager"
 )
+
+# The panel page, code and styles are re-checked with the router on every open
+# (an unchanged file costs a short "304 not modified"): after an update a browser
+# must not keep showing the old panel — a phone did, for days (14.10.2026)
+$HTTP["url"] =~ "(/|\.html|\.js|\.css)$" {
+    setenv.add-response-header = ( "Cache-Control" => "no-cache" )
+}
 
 # Zashchita: only local network
 $HTTP["remoteip"] !~ "^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)" {
