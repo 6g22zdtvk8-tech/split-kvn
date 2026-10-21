@@ -677,7 +677,7 @@
             'settings.dangerZone': '⚠️ Danger Zone',
             'settings.dangerZoneDescription': 'Advanced settings that can break DNS and VPN functionality. Only change if you know what you\'re doing.',
             'settings.dnsmasqPort': 'Internal dnsmasq Port',
-            'settings.dnsmasqPortWarning': '🔴 CRITICAL: This port is used internally for DNS routing. Changing it requires full system restart (dnsmasq, iptables, sing-box). Incorrect configuration may break all DNS resolution. Default value is 5353. Only change if you have port conflict.',
+            'settings.dnsmasqPortWarning': '🔴 CRITICAL: This port is used internally for DNS routing. Changing it requires full system restart (dnsmasq, iptables, sing-box). Incorrect configuration may break all DNS resolution. Default value is 5354. Only change if you have port conflict.',
             'settings.confirmChangeDnsmasqPort': 'CRITICAL: Changing dnsmasq port to {port} will restart all VPN services. DNS may be temporarily unavailable. Current default is {default}. Are you absolutely sure?',
             'backup.title': 'Backup & Restore',
             'backup.hint': 'One file with configurations, subscriptions, the active server, VPN server users, your lists, segment policies and settings. The panel password is not included.',
@@ -1917,7 +1917,7 @@
             'settings.dangerZone': '⚠️ Опасная зона',
             'settings.dangerZoneDescription': 'Расширенные настройки, которые могут сломать DNS и VPN. Меняйте только если знаете, что делаете.',
             'settings.dnsmasqPort': 'Внутренний порт dnsmasq',
-            'settings.dnsmasqPortWarning': '🔴 КРИТИЧНО: Этот порт используется внутри для DNS-маршрутизации. Изменение требует полного перезапуска системы (dnsmasq, iptables, sing-box). Неправильная конфигурация может сломать всё DNS-разрешение. Значение по умолчанию: 5353. Меняйте только при конфликте портов.',
+            'settings.dnsmasqPortWarning': '🔴 КРИТИЧНО: Этот порт используется внутри для DNS-маршрутизации. Изменение требует полного перезапуска системы (dnsmasq, iptables, sing-box). Неправильная конфигурация может сломать всё DNS-разрешение. Значение по умолчанию: 5354. Меняйте только при конфликте портов.',
             'settings.confirmChangeDnsmasqPort': 'КРИТИЧНО: Изменение порта dnsmasq на {port} перезапустит все VPN-сервисы. DNS может быть временно недоступен. Текущее значение по умолчанию: {default}. Вы абсолютно уверены?',
             'backup.title': 'Резервная копия',
             'backup.hint': 'Один файл: конфигурации, подписки, активный сервер, пользователи VPN-сервера, ваши списки, политики сегментов и настройки. Пароль панели в него не входит.',
@@ -6522,7 +6522,7 @@
             const portInput = $('#settings-dnsmasq-port');
             if (portInput && data.dnsmasq_port) {
                 portInput.value = data.dnsmasq_port;
-                portInput.placeholder = data.default_dnsmasq_port || 5353;
+                portInput.placeholder = data.default_dnsmasq_port || 5354;
             }
         } catch (error) {
             console.error('Failed to load dnsmasq port settings:', error);
@@ -6832,7 +6832,7 @@
                 }
                 
                 // Reserved ports
-                const reserved = [22, 53, 80, 222, 443, 5353, 8080, 8388];
+                const reserved = [22, 53, 80, 222, 443, 5353, 5354, 8080, 8388];
                 if (reserved.includes(port)) {
                     showToast(t('port.reserved').replace('{port}', port), 'error');
                     return;
@@ -6940,7 +6940,7 @@
                 // Critical confirmation dialog
                 const message = t('settings.confirmChangeDnsmasqPort')
                     .replace('{port}', port)
-                    .replace('{default}', '5353');
+                    .replace('{default}', '5354');
                 
                 if (confirm(message)) {
                     changeDnsmasqPort(port, btnChangeDnsmasqPort);

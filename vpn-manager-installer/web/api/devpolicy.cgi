@@ -18,7 +18,7 @@ fi
 
 POLICY_SCRIPT="$VPN_MANAGER_HOME/scripts/keenetic-policies.sh"
 # Ports the router itself already uses for us; the rest is checked live
-RESERVED_PORTS="22 23 53 67 68 79 80 222 443 1900 2080 2098 5351 5353 5453 8001 8080 8081 8388 9090"
+RESERVED_PORTS="22 23 53 67 68 79 80 222 443 1900 2080 2098 5351 5353 5354 5453 8001 8080 8081 8388 9090"
 
 ACTION=$(echo "${PATH_INFO:-}" | cut -d'/' -f2)
 

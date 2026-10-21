@@ -577,9 +577,9 @@ case "$REQUEST_METHOD" in
                         # Check status
                         if check_ss_running; then
                             # Start lists update (if first run) and warmup in background
-                            # Use dig with port 5353 (dnsmasq), as nslookup doesn't support port
-                            ( dig @127.0.0.1 -p 5353 youtube.com +short +time=2 >/dev/null 2>&1; \
-                              dig @127.0.0.1 -p 5353 google.com +short +time=2 >/dev/null 2>&1; \
+                            # Use dig with the dnsmasq port, as nslookup doesn't support port
+                            ( dig @127.0.0.1 -p $(dnsmasq_port) youtube.com +short +time=2 >/dev/null 2>&1; \
+                              dig @127.0.0.1 -p $(dnsmasq_port) google.com +short +time=2 >/dev/null 2>&1; \
                               # Auto-update lists on first activation (if remote-lists is empty)
                               REMOTE_LISTS_DIR="$VPN_MANAGER_HOME/remote-lists"; \
                               if [ ! -d "$REMOTE_LISTS_DIR" ] || [ -z "$(ls -A "$REMOTE_LISTS_DIR" 2>/dev/null)" ]; then \

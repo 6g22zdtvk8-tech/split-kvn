@@ -86,9 +86,28 @@ prepare_mark_chain() {
     fi
     $ipt -t mangle -N "$new" 2>/dev/null || $ipt -t mangle -F "$new"
     # B36: a device on one of our device policies (firmware mark) is routed by that
-    # policy in sing-box; the segment rules must not overrule it
-    local m
-    for m in $("$VPN_MANAGER_HOME/scripts/keenetic-policies.sh" marks 2>/dev/null | awk '{print $2}'); do
+    # policy in sing-box; the segment rules must not overrule it.
+    # Except the VPN lists (B43): through the firmware's own proxy client long quiet
+    # connections die (AnyDesk lost its server every 20 s, 19.10.2026), so for every
+    # policy that uses the VPN these addresses go into the tunnel like everyone else's —
+    # same VPN, only the path inside the router differs. "Direct" never uses the VPN.
+    local m p sfx="" policies
+    [ "$ipt" = "ip6tables" ] && sfx="6"
+    policies=$("$VPN_MANAGER_HOME/scripts/keenetic-policies.sh" marks 2>/dev/null)
+    printf '%s\n' "$policies" | while read -r p m; do
+        case "$m" in *[!0-9a-fA-F]*|'') continue ;; esac
+        [ "$p" = "direct" ] && continue
+        $ipt -t mangle -A "$new" -m mark --mark "0x$m" -m set ! --match-set "vpn_servers$sfx" dst \
+            -m set --match-set "vpn_domains$sfx" dst -j MARK --set-xmark "$TUN_FWMARK/0xffffffff"
+        $ipt -t mangle -A "$new" -m mark --mark "0x$m" -m set ! --match-set "vpn_servers$sfx" dst \
+            -m set --match-set "vpn_subnets$sfx" dst -j MARK --set-xmark "$TUN_FWMARK/0xffffffff"
+        $ipt -t mangle -A "$new" -p udp -m mark --mark "0x$m" -m set ! --match-set "vpn_servers$sfx" dst \
+            -m set --match-set "vpn_domains${sfx}_udp" dst -j MARK --set-xmark "$TUN_FWMARK/0xffffffff"
+        $ipt -t mangle -A "$new" -p udp -m mark --mark "0x$m" -m set ! --match-set "vpn_servers$sfx" dst \
+            -m set --match-set "vpn_subnets${sfx}_udp" dst -j MARK --set-xmark "$TUN_FWMARK/0xffffffff"
+    done
+    [ -n "$policies" ] && $ipt -t mangle -A "$new" -m mark --mark "$TUN_FWMARK" -j RETURN
+    for m in $(printf '%s\n' "$policies" | awk '{print $2}'); do
         case "$m" in *[!0-9a-fA-F]*|'') continue ;; esac
         $ipt -t mangle -A "$new" -m mark --mark "0x$m" -j RETURN
     done
@@ -201,6 +220,12 @@ IPSET6_SERVERS="vpn_servers6"
 
 # directory VPN Manager
 VPN_MANAGER_HOME="/opt/etc/vpn-manager"
+
+# dnsmasq port (settings.json "dnsmasq_port"). Not 5353: that is the mDNS port the
+# firmware's avahi-daemon holds too — the kernel shared the queries between the two and
+# a dnsmasq restart could leave the whole home without DNS (reported 21.10.2026).
+DNSMASQ_PORT=$(jq -r '.dnsmasq_port // 5354' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)
+case "$DNSMASQ_PORT" in ''|*[!0-9]*) DNSMASQ_PORT=5354 ;; esac
 
 # Configuration files
 # DEVICES_FILE="$VPN_MANAGER_HOME/device-routing.json"  # DISABLED
@@ -582,10 +607,10 @@ refresh_vpn_servers_set() {
                 case "$host" in
                     *:*) ipset add ${IPSET6_SERVERS}_new "$host" -exist 2>/dev/null && n=$((n + 1)) ;;
                     *)
-                        for ip in $(dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 "$host" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'); do
+                        for ip in $(dig @127.0.0.1 -p $DNSMASQ_PORT +short +time=2 +tries=1 "$host" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'); do
                             ipset add ${IPSET_SERVERS}_new "$ip" -exist 2>/dev/null && n=$((n + 1))
                         done
-                        for ip in $(dig @127.0.0.1 -p 5353 +short +time=2 +tries=1 "$host" AAAA 2>/dev/null | grep ':'); do
+                        for ip in $(dig @127.0.0.1 -p $DNSMASQ_PORT +short +time=2 +tries=1 "$host" AAAA 2>/dev/null | grep ':'); do
                             ipset add ${IPSET6_SERVERS}_new "$ip" -exist 2>/dev/null && n=$((n + 1))
                         done
                         ;;
@@ -717,7 +742,7 @@ save_dnsredir_snapshot() {
     for ifc in $(get_all_bridge_interfaces) $VPN_SERVER_IFS; do
         for f in 4 6; do
             if [ $f = 4 ]; then ipt=iptables; else ipt=ip6tables; command -v ip6tables >/dev/null 2>&1 || continue; fi
-            $ipt -w -t nat -C PREROUTING -i $ifc -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null && echo "$f $ifc" >> "$tmp"
+            $ipt -w -t nat -C PREROUTING -i $ifc -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null && echo "$f $ifc" >> "$tmp"
         done
     done
     mv "$tmp" "$DNSREDIR_SNAPSHOT"
@@ -731,8 +756,8 @@ dnsredir_restore() {
     while read -r f ifc; do
         [ $f = 6 ] && ipt=ip6tables || ipt=iptables
         for p in udp tcp; do
-            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-                { $ipt -w -t nat -I PREROUTING 1 -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null && n=$((n + 1)); }
+            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+                { $ipt -w -t nat -I PREROUTING 1 -i $ifc -p $p --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null && n=$((n + 1)); }
         done
     done < "$DNSREDIR_SNAPSHOT"
     [ $n -gt 0 ] && logger -t singbox-rules "quick-restore: DNS redirects back after a firmware reload ($n rules)"
@@ -757,7 +782,7 @@ all_in_place() {
     while read -r f ifc; do
         [ $f = 6 ] && ipt=ip6tables || ipt=iptables
         for p in udp tcp; do
-            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || return 1
+            $ipt -w -t nat -C PREROUTING -i $ifc -p $p --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || return 1
         done
     done < "$DNSREDIR_SNAPSHOT"
     [ "$(current_ifset)" = "$(cat "$IFSET_SNAPSHOT" 2>/dev/null)" ] || return 1
@@ -1140,44 +1165,46 @@ start() {
             esac
         done
         
+        purge_stale_dnsredir
         # -------------------------------------------------------------------------
         # IPv6 DNS redirect (for all bridge interfaces)
         # -------------------------------------------------------------------------
         for br_if in $(get_all_bridge_interfaces); do
-            ip6tables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-                ip6tables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353
-            ip6tables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-                ip6tables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+            ip6tables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
+            ip6tables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
         done
         
         # IPv6 DNS redirect for VPN-clients
         for vpn_if in $VPN_SERVER_IFS; do
-            ip6tables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353
-            ip6tables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+            ip6tables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
+            ip6tables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+                ip6tables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
         done
         echo "  IPv6 DNS redirect: OK"
     else
         echo "  ip6tables: NOT AVAILABLE"
     fi
     
-    # Perenapravlenie IPv4 DNS on dnsmasq (port 5353)
+    purge_stale_dnsredir
+    # IPv4 DNS redirect to dnsmasq (port $DNSMASQ_PORT)
     # IMPORTANT: -I PREROUTING 1 vstavlyaet in nachalo, to intercept DNS to system rules Keenetic
     # Apply to ALL bridge interfaces (br0, br1, br2...) — same as IPv6 DNS redirect
     for br_if in $(get_all_bridge_interfaces); do
-        iptables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-            iptables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports 5353
-        iptables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-            iptables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+        iptables -t nat -C PREROUTING -i $br_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $br_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
+        iptables -t nat -C PREROUTING -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $br_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
     done
     
     # DNS redirect for VPN-clients router
     for vpn_if in $VPN_SERVER_IFS; do
-        iptables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-            iptables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports 5353
-        iptables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null || \
-            iptables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports 5353
+        iptables -t nat -C PREROUTING -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $vpn_if -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
+        iptables -t nat -C PREROUTING -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null || \
+            iptables -t nat -I PREROUTING 1 -i $vpn_if -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT
     done
     echo "  IPv4 DNS redirect: OK"
     
@@ -1270,14 +1297,28 @@ start() {
     echo "=== Done ==="
 }
 
+# DNS redirects to a port dnsmasq no longer listens on (the old 5353 after the move):
+# they would sit above nothing useful and, after a port change, catch DNS first.
+purge_stale_dnsredir() {
+    local ipt p port ifc
+    for ipt in iptables ip6tables; do
+        command -v $ipt >/dev/null 2>&1 || continue
+        $ipt -t nat -S PREROUTING 2>/dev/null | grep -- '--dport 53 -j REDIRECT --to-ports' | while read -r line; do
+            port=${line##*--to-ports }
+            [ "$port" = "$DNSMASQ_PORT" ] && continue
+            $ipt -t nat $(echo "$line" | sed 's/^-A /-D /') 2>/dev/null
+        done
+    done
+}
+
 # Warm-up domains — resolve all domains to zapolnit ipset
 warmup_domains() {
     echo "Warming up domains (populating ipset via DNS)..."
     
-    # IMPORTANT: dnsmasq on port 5353, nslookup not supports port
+    # IMPORTANT: dnsmasq on its own port ($DNSMASQ_PORT), nslookup does not support ports
     # Use dig if there is, inache netcat UDP
     local DNS_CMD=""
-    local DNS_PORT=5353
+    local DNS_PORT=$DNSMASQ_PORT
     
     if command -v dig >/dev/null 2>&1; then
         DNS_CMD="dig"
@@ -1514,8 +1555,8 @@ stop() {
             ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6 2>/dev/null
             ip6tables -t mangle -D PREROUTING -i $iface -j SING_BOX6_FULL 2>/dev/null
             # DNS redirect
-            ip6tables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
-            ip6tables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+            ip6tables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null
+            ip6tables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null
         done
         ip6tables -t mangle -F SING_BOX6_MARK 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK 2>/dev/null
         ip6tables -t mangle -F SING_BOX6_MARK_FULL 2>/dev/null; ip6tables -t mangle -X SING_BOX6_MARK_FULL 2>/dev/null
@@ -1530,8 +1571,8 @@ stop() {
     
     # IPv4 DNS redirect
     for iface in $ALL_IFACES; do
-        iptables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
-        iptables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports 5353 2>/dev/null
+        iptables -t nat -D PREROUTING -i $iface -p udp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null
+        iptables -t nat -D PREROUTING -i $iface -p tcp --dport 53 -j REDIRECT --to-ports $DNSMASQ_PORT 2>/dev/null
     done
     
     # FORWARD rules for TUN

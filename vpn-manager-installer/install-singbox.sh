@@ -588,13 +588,13 @@ create_singbox_config() {
         "type": "udp",
         "tag": "bootstrap",
         "server": "127.0.0.1",
-        "server_port": 5353
+        "server_port": 5354
       },
       {
         "type": "udp",
         "tag": "local",
         "server": "127.0.0.1",
-        "server_port": 5353
+        "server_port": 5354
       },
       {
         "type": "tls",
@@ -699,7 +699,7 @@ ensure_singbox_dns_bootstrap() {
     fi
 
     # Use dnsmasq on port 5353 directly (avoids NAT interception loops)
-    local local_dns="127.0.0.1:5353"
+    local local_dns="127.0.0.1:5354"
 
     local tmp_config="/tmp/singbox_config_tmp.json"
     # final outbound tag (if already configured via VPN Manager)
@@ -716,8 +716,8 @@ ensure_singbox_dns_bootstrap() {
           as $rest
           | (
               [
-                {"type":"udp","tag":"bootstrap","server":"127.0.0.1","server_port":5353},
-                {"type":"udp","tag":"local","server":"127.0.0.1","server_port":5353},
+                {"type":"udp","tag":"bootstrap","server":"127.0.0.1","server_port":5354},
+                {"type":"udp","tag":"local","server":"127.0.0.1","server_port":5354},
                 ({"type":"tls","tag":"remote","server":"8.8.8.8"}
                  + (if $final_tag=="direct" then {} else {"detour":$final_tag} end))
               ] + $rest
@@ -800,9 +800,9 @@ smoke_test() {
     local lan_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9.]+' | head -1 | awk '{print $2}')
     [ -z "$lan_ip" ] && lan_ip="192.168.1.1"
 
-    local dnsmasq_port=5353
+    local dnsmasq_port=5354
     if command -v jq >/dev/null 2>&1 && [ -f "$VPN_MANAGER_HOME/settings.json" ]; then
-        dnsmasq_port=$(jq -r '.dnsmasq_port // 5353' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)
+        dnsmasq_port=$(jq -r '.dnsmasq_port // 5354' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)
     fi
 
     if pgrep -f "dnsmasq" >/dev/null 2>&1; then
@@ -1509,7 +1509,7 @@ install_vpn_manager() {
   "web_port": 8001,
   "auto_update_lists": true,
   "lists_source_url": "https://raw.githubusercontent.com/6g22zdtvk8-tech/split-kvn-lists/main",
-  "dnsmasq_port": 5353,
+  "dnsmasq_port": 5354,
   "failover_mode": "off",
   "failover_check_interval": 300,
   "auto_update": true,
@@ -1525,6 +1525,25 @@ EOF
             local tmp=$(mktemp)
             jq '. + {"usdt_wallet": "TKeLZvc52avetPTngMC4TvJrv9zAu56Tv2"}' "$VPN_MANAGER_HOME/settings.json" > "$tmp" && mv "$tmp" "$VPN_MANAGER_HOME/settings.json"
             log_ok "Added usdt_wallet to existing settings"
+        fi
+
+        # dnsmasq off 5353: that is the mDNS port the firmware's avahi-daemon holds too, the
+        # kernel shared the queries between them and a dnsmasq restart could leave the whole
+        # home without DNS (21.10.2026). The old default (or no key) moves to 5354, a port
+        # set by hand is kept. sing-box asks dnsmasq directly, so its config follows;
+        # run_update then restarts the DNS chain in order (flag file).
+        if [ "$(jq -r '.dnsmasq_port // 5353' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)" = "5353" ]; then
+            local tmp_dp=$(mktemp)
+            if jq '.dnsmasq_port = 5354' "$VPN_MANAGER_HOME/settings.json" > "$tmp_dp" 2>/dev/null && [ -s "$tmp_dp" ]; then
+                cat "$tmp_dp" > "$VPN_MANAGER_HOME/settings.json"
+                if [ -s "$SINGBOX_CONFIG" ] && jq '(.dns.servers // []) |= map(if .server == "127.0.0.1" and .server_port == 5353 then .server_port = 5354 else . end)' \
+                        "$SINGBOX_CONFIG" > "$tmp_dp" 2>/dev/null && [ -s "$tmp_dp" ] && jq empty "$tmp_dp" 2>/dev/null; then
+                    cat "$tmp_dp" > "$SINGBOX_CONFIG"
+                fi
+                touch /tmp/vpn-manager-dnsmasq-port-moved
+                log_ok "dnsmasq moves from port 5353 (shared with the firmware's mDNS) to 5354"
+            fi
+            rm -f "$tmp_dp"
         fi
 
         # B2: give an existing router the self-update keys. The switch is on by
@@ -2025,6 +2044,26 @@ run_update() {
         # same engine, but the AmneziaWG padding changed: the running sing-box reloads it
         /opt/etc/init.d/S99sing-box restart >/dev/null 2>&1
         SKIP_WARMUP=1 /opt/etc/init.d/S98singbox-rules start 0 >/dev/null 2>&1
+    fi
+
+    # dnsmasq moved off 5353 (see install_vpn_manager): the port lives in four places —
+    # dnsmasq itself, the DNS redirects, sing-box and settings. Restart them together, in
+    # order, so DNS is never pointed at a port nobody listens on (a few seconds' break).
+    if [ -f /tmp/vpn-manager-dnsmasq-port-moved ]; then
+        rm -f /tmp/vpn-manager-dnsmasq-port-moved
+        "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" apply --no-restart >/dev/null 2>&1
+        local sb_was_on=0
+        pidof sing-box >/dev/null 2>&1 && sb_was_on=1
+        [ $sb_was_on = 1 ] && /opt/etc/init.d/S99sing-box stop >/dev/null 2>&1
+        /opt/etc/init.d/S56dnsmasq restart >/dev/null 2>&1
+        if [ $sb_was_on = 1 ]; then
+            rm -f /opt/var/run/sing-box.stopped
+            /opt/etc/init.d/S99sing-box start >/dev/null 2>&1
+        fi
+        SKIP_WARMUP=1 /opt/etc/init.d/S98singbox-rules start 0 >/dev/null 2>&1
+        rules_before="$rules_after"
+        singbox_before="$singbox_after"
+        log_ok "DNS chain restarted on port 5354"
     fi
 
     # The panel is plain files served by lighttpd: new code is live as soon as it

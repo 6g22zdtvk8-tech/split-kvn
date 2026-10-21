@@ -36,6 +36,15 @@ REMOTE_SUBNETS_TCPUDP="$REMOTE_LISTS_DIR/tcp_udp_subnets.txt"
 REMOTE_SUBNETS_UDPONLY="$REMOTE_LISTS_DIR/udp_subnets.txt"
 SETTINGS_FILE="$VPN_MANAGER_HOME/settings.json"
 
+# dnsmasq's port (settings "dnsmasq_port"). 5354 by default: 5353 is the mDNS port the
+# firmware's avahi-daemon holds as well (both bound it, DNS of the whole home broke).
+dnsmasq_port() {
+    local p
+    p=$(jq -r '.dnsmasq_port // 5354' "$SETTINGS_FILE" 2>/dev/null)
+    case "$p" in ''|*[!0-9]*) p=5354 ;; esac
+    echo "$p"
+}
+
 # dnsmasq configs
 DNSMASQ_VPN_DOMAINS="/opt/etc/dnsmasq.d/vpn-domains.conf"
 DNSMASQ_VPN_DOMAINS_UDP="/opt/etc/dnsmasq.d/vpn-domains-udp.conf"
@@ -1202,7 +1211,7 @@ get_singbox_base_config() {
   "log": {"level": "warn", "timestamp": true},
   "dns": {
     "servers": [
-      {"type": "udp", "tag": "local", "server": "127.0.0.1", "server_port": 5353}
+      {"type": "udp", "tag": "local", "server": "127.0.0.1", "server_port": 5354}
     ],
     "final": "local",
     "strategy": "ipv4_only"
@@ -1336,10 +1345,10 @@ apply_singbox_vpn_items() {
         #
         # DNS:
         # - For resolving VPN outbound endpoint domain (tag) use bootstrap via local dnsmasq
-        #   (udp://127.0.0.1:5353, detour=direct). DoT (tls://8.8.8.8:853) is often blocked by
+        #   (udp://127.0.0.1:<dnsmasq port>, detour=direct). DoT (tls://8.8.8.8:853) is often blocked by
         #   ISP/routers and leaves VPN dead with "lookup ... dial tcp 8.8.8.8:853: i/o timeout".
         #   Local dnsmasq uses plain UDP upstream and doesn't loop through TUN at bootstrap time.
-        # - For other requests use local dnsmasq on udp://127.0.0.1:5353 (not router IP!) to preserve ipset logic.
+        # - For other requests use local dnsmasq on udp://127.0.0.1:<dnsmasq port> (not router IP!) to preserve ipset logic.
         #
         # Route rules:
         # - Add rules for ss-server-in (VPN clients) so they route by same rules as LAN clients
@@ -1352,7 +1361,7 @@ apply_singbox_vpn_items() {
         # resolving the VPN server hostname → "lookup ... dial tcp 8.8.8.8:853: i/o timeout".
         # Log level: warn normally (info logs every connection and wears the drive out),
         # info only while verbose mode is on
-        jq --argjson items "$items_json" --arg tag "$tag" --argjson vpnclient_rules "$vpnclient_rules" \
+        jq --argjson items "$items_json" --arg tag "$tag" --argjson vpnclient_rules "$vpnclient_rules" --argjson dport "$(dnsmasq_port)" \
            --argjson policy_rules "$policy_rules" --argjson policy_inbounds "$policy_inbounds" \
            --arg loglevel "$(singbox_log_level)" \
            '
@@ -1389,8 +1398,8 @@ apply_singbox_vpn_items() {
                # sing-box 1.14 server format. The VPN server name itself resolves
                # through route.default_domain_resolver (bootstrap), set above
                | .servers = [
-                   {"type":"udp","tag":"bootstrap","server":"127.0.0.1","server_port":5353},
-                   {"type":"udp","tag":"local","server":"127.0.0.1","server_port":5353},
+                   {"type":"udp","tag":"bootstrap","server":"127.0.0.1","server_port":$dport},
+                   {"type":"udp","tag":"local","server":"127.0.0.1","server_port":$dport},
                    {"type":"tls","tag":"remote","server":"8.8.8.8","detour":$tag}
                  ]
                | .rules = []
@@ -1404,7 +1413,7 @@ apply_singbox_vpn_items() {
         if [ -s "$tmp_config" ] && jq empty "$tmp_config" 2>/dev/null; then
             mv "$tmp_config" "$SINGBOX_CONFIG"
             chmod 644 "$SINGBOX_CONFIG"
-            log_action "SINGBOX_CONFIG" "Applied outbound: $tag (with DNS detour and rules, local DNS: udp://127.0.0.1:5353)"
+            log_action "SINGBOX_CONFIG" "Applied outbound: $tag (with DNS detour and rules, local DNS: udp://127.0.0.1:$(dnsmasq_port))"
         else
             rm -f "$tmp_config"
             log_action "SINGBOX_CONFIG" "ERROR: jq returned empty or invalid result, config not modified"

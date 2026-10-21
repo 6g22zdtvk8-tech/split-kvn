@@ -21,10 +21,10 @@ LIGHTTPD_INIT="/opt/etc/init.d/S80lighttpd"
 # Default values
 DEFAULT_WEB_PORT=8001
 DEFAULT_LISTS_SOURCE="https://raw.githubusercontent.com/6g22zdtvk8-tech/split-kvn-lists/main"
-DEFAULT_DNSMASQ_PORT=5353
+DEFAULT_DNSMASQ_PORT=5354
 
 # Reserved ports (cannot be used for web interface)
-RESERVED_PORTS="22 53 80 222 443 5353 8080 8388"
+RESERVED_PORTS="22 53 80 222 443 5353 5354 8080 8388"
 
 # =============================================================================
 # Functions
@@ -337,7 +337,7 @@ change_dnsmasq_port() {
     
     # Get current port from settings
     init_settings
-    local old_port=$(jq -r '.dnsmasq_port // 5353' "$SETTINGS_FILE" 2>/dev/null)
+    local old_port=$(jq -r '.dnsmasq_port // 5354' "$SETTINGS_FILE" 2>/dev/null)
     
     # If port hasn't changed
     if [ "$new_port" = "$old_port" ]; then

@@ -2,7 +2,7 @@
 # =============================================================================
 # DNS upstream fallback: plain UDP/TCP :53 → DoT via stubby (127.0.0.1:5453)
 #
-# dnsmasq listens on :5353 (client DNS + ipset). Upstream is either:
+# dnsmasq listens on :5354 by default, settings "dnsmasq_port" (client DNS + ipset; 5353 is mDNS). Upstream is either:
 #   plain  — gateway + 8.8.8.8 / 1.1.1.1 (port 53)
 #   dot    — stubby DoT stub on 127.0.0.1:5453 (when outbound :53 is blocked)
 #
@@ -23,16 +23,17 @@ log_info() { printf '[dns-upstream] %s\n' "$1"; }
 log_ok()   { printf '[dns-upstream] OK: %s\n' "$1"; }
 log_warn() { printf '[dns-upstream] WARN: %s\n' "$1"; }
 
+# The port from settings wins; the one in our own config only when settings say nothing
+# (it used to be the other way round, so moving the port in settings changed nothing).
 get_dnsmasq_port() {
-    local port=5353
+    local port=""
     if command -v jq >/dev/null 2>&1 && [ -f "$VPN_MANAGER_HOME/settings.json" ]; then
-        port=$(jq -r '.dnsmasq_port // 5353' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)
+        port=$(jq -r '.dnsmasq_port // empty' "$VPN_MANAGER_HOME/settings.json" 2>/dev/null)
     fi
-    if [ -f "$DNS_UPSTREAM_CONF" ]; then
-        local p
-        p=$(grep '^port=' "$DNS_UPSTREAM_CONF" 2>/dev/null | head -1 | cut -d= -f2)
-        [ -n "$p" ] && port="$p"
+    if [ -z "$port" ] && [ -f "$DNS_UPSTREAM_CONF" ]; then
+        port=$(grep '^port=' "$DNS_UPSTREAM_CONF" 2>/dev/null | head -1 | cut -d= -f2)
     fi
+    case "$port" in ''|*[!0-9]*) port=5354 ;; esac
     echo "$port"
 }
 
@@ -293,7 +294,7 @@ apply_dns_upstream() {
 
     if test_plain_dns; then
         new_mode="plain"
-        if [ "$current_mode" = "plain" ] && [ -f "$DNS_UPSTREAM_CONF" ]; then
+        if [ "$current_mode" = "plain" ] && grep -qx "port=$port" "$DNS_UPSTREAM_CONF" 2>/dev/null; then
             [ "$quiet" = "0" ] && log_ok "upstream unchanged: plain"
             return 0
         fi
@@ -304,7 +305,7 @@ apply_dns_upstream() {
 
     if test_dot_dns; then
         new_mode="dot"
-        if [ "$current_mode" = "dot" ] && test_dnsmasq_local "$port"; then
+        if [ "$current_mode" = "dot" ] && grep -qx "port=$port" "$DNS_UPSTREAM_CONF" 2>/dev/null && test_dnsmasq_local "$port"; then
             [ "$quiet" = "0" ] && log_ok "upstream unchanged: dot (dnsmasq OK)"
             return 0
         fi
