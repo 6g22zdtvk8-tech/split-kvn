@@ -62,6 +62,14 @@
             'subtab.domainsUdp': 'Domains UDP',
             'subtab.subnetsTcpUdp': 'Subnets',
             'subtab.subnetsUdp': 'Subnets UDP',
+            'subtab.dnsPinned': 'DNS via Google',
+            'dnspin.desc': "Addresses of these sites are always asked from the DNS servers below, not from the provider. Helps when a provider's DNS says a working site does not exist. Routing (VPN or direct) does not change.",
+            'dnspin.server1': 'DNS server 1',
+            'dnspin.server2': 'DNS server 2',
+            'dnspin.saved': 'Saved: {n} domain(s) use their own DNS',
+            'dnspin.errors.servers': 'Enter one or two DNS servers',
+            'dnspin.errors.server': 'A DNS server must be an IPv4 address, e.g. 8.8.8.8',
+            'dnspin.errors.domain': 'Not a domain: {d}',
             'lists.tabTitle': 'Domains and subnets',
             'lists.modeSplitWhatBoth': 'these sites and addresses go through VPN',
             'lists.modeVpnPrimaryWhatBoth': 'these sites and addresses go direct',
@@ -1205,6 +1213,14 @@
             'subtab.domainsUdp': 'Домены UDP',
             'subtab.subnetsTcpUdp': 'Подсети',
             'subtab.subnetsUdp': 'Подсети UDP',
+            'subtab.dnsPinned': 'DNS через Google',
+            'dnspin.desc': 'Адреса этих сайтов роутер всегда спрашивает у DNS-серверов ниже, а не у провайдера. Помогает, когда DNS провайдера отвечает, что работающего сайта нет. Маршрут (через VPN или напрямую) не меняется.',
+            'dnspin.server1': 'DNS-сервер 1',
+            'dnspin.server2': 'DNS-сервер 2',
+            'dnspin.saved': 'Сохранено: доменов со своим DNS — {n}',
+            'dnspin.errors.servers': 'Укажите один или два DNS-сервера',
+            'dnspin.errors.server': 'DNS-сервер — это IPv4-адрес, например 8.8.8.8',
+            'dnspin.errors.domain': 'Это не домен: {d}',
             'lists.tabTitle': 'Домены и подсети',
             'lists.modeSplitWhatBoth': 'эти сайты и адреса идут через VPN',
             'lists.modeVpnPrimaryWhatBoth': 'эти сайты и адреса идут напрямую',
@@ -5571,6 +5587,54 @@
             content.classList.toggle('active', content.id === `subtab-${subtabName}`);
         });
         updateListModeUI(); // the rule text says "sites" or "addresses"
+        // DNS via Google is not a routing list: the mode rows above do not apply to it
+        $('#list-mode-panel-domains')?.classList.toggle('dns-pinned-open', subtabName === 'dns-pinned');
+        if (subtabName === 'dns-pinned') loadDnsPinned();
+    }
+
+    // Domains with their own DNS servers (dnspin.cgi)
+    async function loadDnsPinned() {
+        try {
+            const data = await api('/dnspin.cgi');
+            if (!data.success || !data.data) return;
+            const servers = data.data.servers || data.data.default_servers || [];
+            const s1 = $('#dnspin-server-1'), s2 = $('#dnspin-server-2'), ed = $('#dnspin-editor');
+            if (s1) s1.value = servers[0] || '';
+            if (s2) s2.value = servers[1] || '';
+            if (ed) ed.value = data.data.domains || '';
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    async function saveDnsPinned() {
+        const btn = $('#dnspin-save-btn');
+        const validation = $('#dnspin-validation');
+        const servers = [$('#dnspin-server-1')?.value, $('#dnspin-server-2')?.value].map(v => (v || '').trim()).filter(Boolean);
+        const domains = $('#dnspin-editor')?.value || '';
+        if (!btn) return;
+        btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.innerHTML = `<span class="btn-spinner"></span> ${t('lists.saving')}`;
+        try {
+            const data = await api('/dnspin.cgi', { method: 'POST', body: JSON.stringify({ servers, domains }) });
+            const n = (data.data?.domains || '').split('\n').map(l => l.replace(/#.*/, '').trim()).filter(Boolean).length;
+            if (validation) {
+                validation.textContent = t('dnspin.saved', { n });
+                validation.className = 'validation-message success';
+            }
+        } catch (e) {
+            let msg = e.message || '';
+            if (msg.startsWith('dnspin.errors.domain:')) msg = t('dnspin.errors.domain', { d: msg.split(':').slice(1).join(':') });
+            else if (msg.startsWith('dnspin.errors.')) msg = t(msg);
+            if (validation) {
+                validation.textContent = msg;
+                validation.className = 'validation-message error';
+            }
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
     }
     
     async function loadDomains() {
@@ -7511,6 +7575,7 @@
         }
         
         // Save buttons for domains
+        $('#dnspin-save-btn')?.addEventListener('click', saveDnsPinned);
         if (elements.domainsSaveTcpUdpBtn) {
             elements.domainsSaveTcpUdpBtn.addEventListener('click', () => saveDomains('tcpudp'));
         }

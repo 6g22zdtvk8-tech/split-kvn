@@ -39,7 +39,7 @@ BACKUP_FILES="subscriptions.json active-config settings.json routing_policies.js
 device-routing.json vpn-domains.txt vpn-domains-udp.txt vpn-subnets.txt
 vpn-subnets-udp.txt direct-domains.txt direct-domains-udp.txt direct-subnets.txt
 direct-subnets-udp.txt vpnserver-credentials.json autostart-enabled router-hwid
-multi.json"
+multi.json dns-pinned-domains.txt"
 # Restore is a full replacement: these are removed when the backup has none
 # (the source router simply did not have them). settings, server users and the
 # HWID are kept instead — losing them would cut off the panel or the clients.
@@ -50,7 +50,7 @@ device-routing.json vpn-domains.txt vpn-domains-udp.txt vpn-subnets.txt
 vpn-subnets-udp.txt autostart-enabled"
 
 # Every archive entry must match this; anything else rejects the whole file
-ALLOWED_ENTRY_RE='^(\./)?$|^(\./)?configs/?$|^(\./)?configs/[A-Za-z0-9_.@+-]+\.json$|^(\./)?(manifest\.json|subscriptions\.json|active-config|settings\.json|routing_policies\.json|device-routing\.json|vpn-domains\.txt|vpn-domains-udp\.txt|vpn-subnets\.txt|vpn-subnets-udp\.txt|direct-domains\.txt|direct-domains-udp\.txt|direct-subnets\.txt|direct-subnets-udp\.txt|vpnserver-credentials\.json|autostart-enabled|router-hwid|multi\.json)$'
+ALLOWED_ENTRY_RE='^(\./)?$|^(\./)?configs/?$|^(\./)?configs/[A-Za-z0-9_.@+-]+\.json$|^(\./)?(manifest\.json|subscriptions\.json|active-config|settings\.json|routing_policies\.json|device-routing\.json|vpn-domains\.txt|vpn-domains-udp\.txt|vpn-subnets\.txt|vpn-subnets-udp\.txt|direct-domains\.txt|direct-domains-udp\.txt|direct-subnets\.txt|direct-subnets-udp\.txt|vpnserver-credentials\.json|autostart-enabled|router-hwid|multi\.json|dns-pinned-domains\.txt)$'
 CONFIG_ID_RE='^[A-Za-z0-9_.@+-]+$'
 
 app_version() {

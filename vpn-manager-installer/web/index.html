@@ -655,6 +655,9 @@
                             <button class="subtab" data-subtab="domains-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.domainsUdp">Domains UDP</span></button>
                             <button class="subtab" data-subtab="subnets-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.subnetsTcpUdp">Subnets</span></button>
                             <button class="subtab" data-subtab="subnets-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.subnetsUdp">Subnets UDP</span></button>
+                            <!-- Different kind of list (not routing): set apart from the four above -->
+                            <span class="subtab-sep" aria-hidden="true"></span>
+                            <button class="subtab subtab-dns" data-subtab="dns-pinned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg><span data-i18n="subtab.dnsPinned">DNS via Google</span></button>
                         </nav>
                     
                         <!-- TCP+UDP domains -->
@@ -823,6 +826,36 @@
                             </div>
                             <input type="file" id="subnets-file-udponly" class="hidden" accept=".txt,.list">
                             <div class="list-overlap-warning hidden" id="subnets-overlap-udponly" role="status"></div>
+                        </div>
+
+                        <!-- Domains always resolved by chosen DNS servers (dnspin.cgi). Not a routing list:
+                             the same for every mode, so the mode rows above are hidden while it is open -->
+                        <div id="subtab-dns-pinned" class="subtab-content hidden">
+                            <p class="section-description" data-i18n="dnspin.desc">Addresses of these sites are always asked from the DNS servers below, not from the provider. Helps when a provider's DNS answers that a working site does not exist. Routing (VPN or direct) does not change.</p>
+                            <div class="dnspin-servers">
+                                <label class="dnspin-server">
+                                    <span data-i18n="dnspin.server1">DNS server 1</span>
+                                    <input type="text" id="dnspin-server-1" inputmode="decimal" placeholder="8.8.8.8" autocomplete="off">
+                                </label>
+                                <label class="dnspin-server">
+                                    <span data-i18n="dnspin.server2">DNS server 2</span>
+                                    <input type="text" id="dnspin-server-2" inputmode="decimal" placeholder="4.2.2.2" autocomplete="off">
+                                </label>
+                            </div>
+                            <div class="editor-container">
+                                <div class="editor-toolbar">
+                                    <span class="editor-info" data-i18n="domains.editorHint">One domain per line. Subdomains are included automatically.</span>
+                                </div>
+                                <div class="editor-wrapper">
+                                    <textarea id="dnspin-editor" class="editor" spellcheck="false" placeholder="nalog.ru&#10;gosuslugi.ru"></textarea>
+                                </div>
+                                <div class="editor-footer">
+                                    <div id="dnspin-validation" class="validation-message"></div>
+                                    <div class="editor-actions">
+                                        <button class="btn btn-primary" id="dnspin-save-btn" data-i18n="domains.save">Save</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <p class="list-mode-hint" data-i18n="lists.bothListsHintBoth">If the same site or address is in both lists, it always goes through VPN.</p>

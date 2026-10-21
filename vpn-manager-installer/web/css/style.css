@@ -2310,7 +2310,8 @@ select {
 /* B25: domains and subnets — four equal tabs in a row; two by two on a phone */
 .lists-subtabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* four routing lists, then the separator and DNS via Google */
+    grid-template-columns: repeat(4, 1fr) auto auto;
 }
 
 .lists-subtabs .subtab {
@@ -4941,3 +4942,55 @@ a.link:hover {
 .devpolicy-step a { color: var(--accent-primary); }
 .devpolicy-step img { display: block; max-width: 100%; height: auto; margin-top: 0.5rem; border: 1px solid var(--border-light); border-radius: var(--radius-md); }
 @media (max-width: 600px) { .devpolicy-cards { grid-template-columns: 1fr 1fr; } }
+
+/* DNS via Google: a different kind of list, set apart from the routing lists */
+.subtab-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 0.25rem 0.375rem;
+    background: var(--border-color, rgba(255, 255, 255, 0.15));
+}
+
+.subtab.subtab-dns:not(.active) {
+    border: 1px dashed var(--border-color, rgba(255, 255, 255, 0.2));
+}
+
+.list-mode-panel.dns-pinned-open .list-mode-rule,
+.list-mode-panel.dns-pinned-open .list-mode-row,
+.list-mode-panel.dns-pinned-open .list-mode-hint,
+.list-mode-panel.dns-pinned-open .list-swap {
+    display: none;
+}
+
+.dnspin-servers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.dnspin-server {
+    display: grid;
+    gap: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.dnspin-server input {
+    width: 11rem;
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+#dnspin-editor {
+    padding-left: 1rem;
+}
+
+@media (max-width: 600px) {
+    .lists-subtabs .subtab-sep { display: none; }
+    .lists-subtabs .subtab-dns { grid-column: 1 / -1; }
+}

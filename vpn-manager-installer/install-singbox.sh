@@ -2077,6 +2077,7 @@ run_update() {
     # dns-dot-domains.sh restarts dnsmasq only when its config changed.
     if [ -x "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" ]; then
         "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" stub || log_warn "DoT stub not available — VPN-list domains use the normal upstream"
+        "$VPN_MANAGER_HOME/scripts/dns-upstream-fallback.sh" pinned >/dev/null 2>&1
         [ -x "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" ] && "$VPN_MANAGER_HOME/scripts/dns-dot-domains.sh" >/dev/null 2>&1
     fi
 
