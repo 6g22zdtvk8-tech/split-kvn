@@ -36,6 +36,36 @@ REMOTE_SUBNETS_TCPUDP="$REMOTE_LISTS_DIR/tcp_udp_subnets.txt"
 REMOTE_SUBNETS_UDPONLY="$REMOTE_LISTS_DIR/udp_subnets.txt"
 SETTINGS_FILE="$VPN_MANAGER_HOME/settings.json"
 
+# The engine has the AmneziaWG padding fix (sing-box-extended #158): 2.7.3 or later,
+# or our former own build "-skvn".
+# sing-box-extended 2.7.3 or later (the author's engine; not our former "-skvn" build,
+# which is 2.7.2 inside). Knows AmneziaWG 3.1: random_trailers, disable_cookies.
+engine_at_least_273() {
+    local v e
+    v=$(/opt/bin/sing-box version 2>/dev/null | head -1)
+    e=$(echo "$v" | sed -n 's/.*extended-\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p')
+    [ -n "$e" ] || return 1
+    case "$v" in *-skvn*) return 1 ;; esac
+    set -- $e
+    [ "$1" -gt 2 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -gt 7 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -eq 7 ] && [ "$3" -ge 3 ] && return 0
+    return 1
+}
+
+engine_padding_fixed() {
+    local v e
+    v=$(/opt/bin/sing-box version 2>/dev/null | head -1)
+    case "$v" in *-skvn*) return 0 ;; esac
+    e=$(echo "$v" | sed -n 's/.*extended-\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p')
+    [ -n "$e" ] || return 1
+    set -- $e
+    [ "$1" -gt 2 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -gt 7 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -eq 7 ] && [ "$3" -ge 3 ] && return 0
+    return 1
+}
+
 # dnsmasq's port (settings "dnsmasq_port"). 5354 by default: 5353 is the mDNS port the
 # firmware's avahi-daemon holds as well (both bound it, DNS of the whole home broke).
 dnsmasq_port() {
@@ -1078,11 +1108,13 @@ generate_outbound_json() {
             # (examples/amnezia/client.json). Any AWG version: Jc/Jmin/Jmax, S1-S4 numbers,
             # H1-H4 a number or a "from-to" range (kept as strings), I1-I5 signature packets.
             # Zero means "off" and is left out, as sing-box does itself.
-            # Split-KVN's own sing-box build carries the wireguard-go fix (version "-skvn"):
-            # there the padding is used in full; the stock engine still gets the cap below
-            local padfix=false
-            /opt/bin/sing-box version 2>/dev/null | head -1 | grep -q -- '-skvn' && padfix=true
-            jq -c --arg tag "$tag" --argjson padfix "$padfix" '
+            # sing-box-extended 2.7.3+ (and our former "-skvn" build) carries the wireguard-go
+            # fix: there the padding is used in full; an older engine still gets the cap below
+            local padfix=false awg31=false
+            engine_padding_fixed && padfix=true
+            # AWG 3.1 switches only on an engine that knows them: an older one rejects the config
+            engine_at_least_273 && awg31=true
+            jq -c --arg tag "$tag" --argjson padfix "$padfix" --argjson awg31 "$awg31" '
                 def num: if type == "string" then tonumber else . end;
                 {type: "wireguard", tag: $tag,
                  address: ((.local_address // "") | split(",") | map(select(length > 0))),
@@ -1098,14 +1130,17 @@ generate_outbound_json() {
                             (["i1","i2","i3","i4","i5","header_protection_key"][] as $k | {key: $k, value: (.[$k] // "")} | select(.value != "")),
                             # AWG 3.0 ranges: a number or "from-to", sing-box takes both as text
                             (["content_padding_addition","rekey_after_time","rekey_timeout","reject_after_time",
-                              "keepalive_timeout","max_handshake_attempts"][] as $k | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "0"))]
+                              "keepalive_timeout","max_handshake_attempts"][] as $k | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "0")),
+                            # AWG 3.1: random trailers after packets, cookies off (on/off switches)
+                            (["random_trailers","disable_cookies"][] as $k
+                             | if $awg31 and (.[$k] == true or .[$k] == "true") then {key: $k, value: true} else empty end)]
                            | from_entries)}
-                # sing-box-extended 2.7.2 (wireguard-go v0.0.6-extended-1.6.1): packets that come
+                # sing-box-extended up to 2.7.2 (wireguard-go v0.0.6-extended-1.6.1): packets that come
                 # straight from the TUN get a buffer with room for only 16 bytes of padding, so a
                 # larger ContentPaddingAddition overruns it and sing-box panics (send.go:879,
                 # "slice bounds out of range … capacity 128"; test router 29.09). Until the fork
                 # is fixed the upper bound is capped at 16 — the padding is our own random
-                # addition, the server does not check its size. Not with our own build.
+                # addition, the server does not check its size. Not on 2.7.3+ (fixed upstream).
                 | if (.amnezia.content_padding_addition // "") != "" and ($padfix | not) then
                     .amnezia.content_padding_addition |= (split("-") | map(tonumber) as $r
                       | ([$r[-1], 16] | min) as $hi | ([$r[0], $hi] | min) as $lo
@@ -1744,6 +1779,9 @@ parse_wireguard_conf() {
                ["rekeyaftertime","rekey_after_time"],["rekeytimeout","rekey_timeout"],["rejectaftertime","reject_after_time"],
                ["keepalivetimeout","keepalive_timeout"],["maxhandshakeattempts","max_handshake_attempts"]][] as $p
               | get($p[0]) | select(. != "") | {key: $p[1], value: .}]
+           # AWG 3.1: RandomTrailers / DisableCookies = on (also true, yes, 1)
+           + [[["randomtrailers","random_trailers"],["disablecookies","disable_cookies"]][] as $b
+              | get($b[0]) | ascii_downcase | select(. == "on" or . == "true" or . == "yes" or . == "1") | {key: $b[1], value: true}]
           | from_entries) as $awg
         | if $hp[0] == "" or $hp[1] == "" or get("privatekey") == "" or get("peer.publickey") == "" then null
           else
@@ -1981,6 +2019,9 @@ config_to_conf() {
              KeepaliveTimeout:keepalive_timeout MaxHandshakeAttempts:max_handshake_attempts; do
         v=$(cfg_get "$f" "${k#*:}")
         [ -n "$v" ] && [ "$v" != "0" ] && echo "${k%%:*} = $v"
+    done
+    for k in RandomTrailers:random_trailers DisableCookies:disable_cookies; do
+        [ "$(cfg_get "$f" "${k#*:}")" = "true" ] && echo "${k%%:*} = on"
     done
     echo
     echo "[Peer]"

@@ -23,6 +23,20 @@ OKS_TO_RETURN=2
 
 log() { logger -t multi-health "$*" 2>/dev/null; return 0; }
 
+# sing-box memory: a line in the log when it nears the soft limit (S99: a third of RAM),
+# at most once an hour — the first sign before the kernel would kill it
+_sb=$(pidof sing-box 2>/dev/null | awk '{print $1}')
+if [ -n "$_sb" ]; then
+    _rss=$(awk '/^VmRSS:/ {print $2}' /proc/$_sb/status 2>/dev/null)
+    _lim=$(awk '/^MemTotal:/ {printf "%d", $2 / 3}' /proc/meminfo 2>/dev/null)
+    _mark=/tmp/vpn-manager-mem-warned
+    if [ -n "$_rss" ] && [ -n "$_lim" ] && [ "$_rss" -gt $((_lim * 9 / 10)) ] && \
+       { [ ! -f "$_mark" ] || [ $(( $(date +%s) - $(date -r "$_mark" +%s 2>/dev/null || echo 0) )) -gt 3600 ]; }; then
+        logger -t vpn-manager "sing-box uses $((_rss / 1024)) MB of RAM (soft limit $((_lim / 1024)) MB)"
+        touch "$_mark"
+    fi
+fi
+
 jq -e '.mode == "multi"' "$MULTI_FILE" >/dev/null 2>&1 || exit 0
 # "fastest" (B42): no main server to watch, sing-box picks the server itself
 jq -e '.strategy == "fastest"' "$MULTI_FILE" >/dev/null 2>&1 && exit 0

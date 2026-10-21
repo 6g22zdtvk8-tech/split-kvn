@@ -379,7 +379,9 @@ case "$REQUEST_METHOD" in
                         + ([(["jc","jmin","jmax","s1","s2","s3","s4"][] as $k | {key: $k, value: (.[$k] // "" | num)} | select(.value != "" and .value != null)),
                             (["h1","h2","h3","h4","i1","i2","i3","i4","i5","header_protection_key","content_padding_addition",
                               "rekey_after_time","rekey_timeout","reject_after_time","keepalive_timeout","max_handshake_attempts"][] as $k
-                             | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "null"))]
+                             | {key: $k, value: (.[$k] // "" | tostring)} | select(.value != "" and .value != "null")),
+                            # AWG 3.1 switches
+                            (["random_trailers","disable_cookies"][] as $k | if (.[$k] == true or .[$k] == "true") then {key: $k, value: true} else empty end)]
                            | from_entries)' 2>/dev/null)
                     [ -n "$WG_JSON" ] || { json_error "Invalid data" 400; exit 0; }
                     [ -n "$(printf '%s' "$WG_JSON" | jq -r '.private_key')" ] || { json_error "Private Key is required" 400; exit 0; }

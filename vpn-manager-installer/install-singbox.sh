@@ -177,16 +177,16 @@ schedule_ndmc_postinstall() {
 # =============================================================================
 # Version sing-box for download
 # =============================================================================
-SINGBOX_VERSION="1.14.1-extended-2.7.2-skvn1"
-# Our build of sing-box-extended: the upstream release plus the wireguard-go fix for
-# AmneziaWG 3.0 content padding (sing-box-extended #158), built by GitHub Actions in
-# the fork. Back to the upstream releases once the author takes the fix.
-SINGBOX_RELEASES="https://github.com/6g22zdtvk8-tech/sing-box-extended/releases/download"
-# SHA-256 of each archive; an archive that does not match is not installed
-SINGBOX_SHA256_linux_arm64="2403a4e28b85d0317965de93ca5667f6bc582a600e7065cd5d8344986006cdd6"
-SINGBOX_SHA256_linux_mipsle_softfloat="cc62839cd3c90d913fe9f3163cb9c663b9f61daf9aabaa13c9ec8d3e2279a583"
-SINGBOX_SHA256_linux_mips_softfloat="67f9638052e874997ce6c319f6474cf669eeb720ec6f3b88bdb23613420311de"
-SINGBOX_SHA256_linux_amd64="a95639b9cc874434b6d720d01f614841ed5beaca97fcf521e23002099927ca14"
+SINGBOX_VERSION="1.14.3-extended-2.7.3"
+# The author's sing-box-extended again: 2.7.3 carries the wireguard-go fix for AmneziaWG
+# content padding (our report #158) and AWG 3.1 (random trailers, cookies off). Our own
+# build ("-skvn", 2.7.2) is no longer needed.
+SINGBOX_RELEASES="https://github.com/shtorm-7/sing-box-extended/releases/download"
+# SHA-256 of each archive (from the release); an archive that does not match is not installed
+SINGBOX_SHA256_linux_arm64="da50f003ee172ba048068145c6d07db5cc6f1202831a358be549a5f2bb1975a6"
+SINGBOX_SHA256_linux_mipsle_softfloat="dd74a7ec829b9469d86f3b5d8fcde47f8827f021b65ab6ce706261d9a84d6bf2"
+SINGBOX_SHA256_linux_mips_softfloat="140c2319ec9cea9c8853533e109777f7540bd6e5221c7f234dc24cb00884beed"
+SINGBOX_SHA256_linux_amd64="c9fd27564d55b6abc7b21c9fdd1e29dee4834e034aeb6b7b8255055bff46a3f5"
 # B2: where routers look for new releases (the manifest of the latest GitHub release)
 DEFAULT_UPDATE_SOURCE="https://github.com/6g22zdtvk8-tech/split-kvn/releases/latest/download/manifest.json"
 
@@ -1939,12 +1939,27 @@ cleanup_legacy_components() {
 # house, and only the init scripts can require one; the caller is told when that
 # is the case and decides. B2 (automatic updates) will drive the restart itself,
 # with a backup taken first and a rollback if the check fails.
-# The AmneziaWG padding cap (16 bytes) is needed only on the stock engine. With our
-# build (version "-skvn") the kept config gets each server's full padding back from
-# its file, so an update lifts the cap without waiting for the next config rebuild.
+# The engine has the AmneziaWG padding fix: sing-box-extended 2.7.3 or later, or our
+# former own build ("-skvn"). Older engines need the 16-byte padding cap.
+engine_padding_fixed() {
+    local v e
+    v=$(/opt/bin/sing-box version 2>/dev/null | head -1)
+    case "$v" in *-skvn*) return 0 ;; esac
+    e=$(echo "$v" | sed -n 's/.*extended-\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p')
+    [ -n "$e" ] || return 1
+    set -- $e
+    [ "$1" -gt 2 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -gt 7 ] && return 0
+    [ "$1" -eq 2 ] && [ "$2" -eq 7 ] && [ "$3" -ge 3 ] && return 0
+    return 1
+}
+
+# The AmneziaWG padding cap (16 bytes) is needed only on an engine without the fix. With
+# the fix the kept config gets each server's full padding back from its file, so an
+# update lifts the cap without waiting for the next config rebuild.
 # Prints "changed" when it rewrote the config.
 lift_awg_padding_cap() {
-    /opt/bin/sing-box version 2>/dev/null | head -1 | grep -q -- '-skvn' || return 0
+    engine_padding_fixed || return 0
     [ -s "$SINGBOX_CONFIG" ] || return 0
     local active=$(cat "$VPN_MANAGER_HOME/active-config" 2>/dev/null)
     local work="/tmp/awg-pad.$$" tmp="/tmp/awg-pad.$$.tmp" tag id src want

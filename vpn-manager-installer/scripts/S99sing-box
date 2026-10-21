@@ -202,7 +202,12 @@ start() {
             # connection failed with "too many open files" (B16)
             ulimit -n 16384 2>/dev/null || ulimit -n 8192 2>/dev/null
             # sing-box output goes to syslog via pipe
-            $SINGBOX_BIN run -c "$SINGBOX_CONFIG" 2>&1 | logger -t sing-box &
+            # Soft memory limit for the Go runtime (a third of the router's RAM): sing-box
+            # collects garbage sooner instead of growing until the kernel kills it — and
+            # dnsmasq/avahi with it (a slow AWG upload, test router 21.10.2026: 258 MB of 512).
+            # It is not a hard cap: real need above it is still served.
+            GOMEMLIMIT="$(awk '/^MemTotal:/ {printf "%dMiB", $2 / 1024 / 3}' /proc/meminfo 2>/dev/null)" \
+                $SINGBOX_BIN run -c "$SINGBOX_CONFIG" 2>&1 | logger -t sing-box &
             SINGBOX_PID=$!
             echo $SINGBOX_PID > "$PIDFILE"
             
