@@ -5,6 +5,20 @@
 # Enable support for deprecated WireGuard outbound (required in sing-box 1.11+)
 export ENABLE_DEPRECATED_WIREGUARD_OUTBOUND=true
 
+# sing-box (Go) looks for root certificates at the firmware's paths. NetcrazeOS 4.3
+# (Hopper NC-3811, 23.10.2026) ships no /etc/ssl/certs/ca-certificates.crt, and then
+# every TLS server is rejected with "x509: certificate signed by unknown authority"
+# and nothing goes through the VPN. Same fix as S55dns-dot-stub: the ca-bundle package.
+if [ -z "$SSL_CERT_FILE" ] && [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then
+    for ca in /opt/etc/ssl/certs/ca-certificates.crt /opt/etc/ssl/cert.pem; do
+        if [ -f "$ca" ]; then
+            SSL_CERT_FILE="$ca"
+            export SSL_CERT_FILE
+            break
+        fi
+    done
+fi
+
 AUTOSTART_FLAG="/opt/etc/vpn-manager/autostart-enabled"
 SINGBOX_BIN="/opt/bin/sing-box"
 SINGBOX_CONFIG="/opt/etc/sing-box/config.json"
