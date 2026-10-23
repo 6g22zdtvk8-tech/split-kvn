@@ -125,15 +125,9 @@ get_domains_stats() {
     local ipset6_count=0
     local ipset_udp_count=0
     
-    if [ -f "$VPN_DOMAINS_TCPUDP" ]; then
-        domains_count=$(grep -cvE '^[[:space:]]*$|^[[:space:]]*#' "$VPN_DOMAINS_TCPUDP" 2>/dev/null)
-        [ -z "$domains_count" ] && domains_count=0
-    fi
-    
-    if [ -f "$VPN_DOMAINS_UDPONLY" ]; then
-        domains_udp_count=$(grep -cvE '^[[:space:]]*$|^[[:space:]]*#' "$VPN_DOMAINS_UDPONLY" 2>/dev/null)
-        [ -z "$domains_udp_count" ] && domains_udp_count=0
-    fi
+    # every domain in effect: cloud lists and own ones, as dnsmasq got them
+    domains_count=$(vpn_domains_in_effect "$DNSMASQ_VPN_DOMAINS")
+    domains_udp_count=$(vpn_domains_in_effect "$DNSMASQ_VPN_DOMAINS_UDP")
     
     # Number of IPs in ipset
     ipset_count=$(ipset list vpn_domains 2>/dev/null | grep -c '^[0-9]')
@@ -144,6 +138,14 @@ get_domains_stats() {
     [ -z "$ipset_udp_count" ] && ipset_udp_count=0
     
     echo "{\"domains\":$domains_count,\"domains_udp\":$domains_udp_count,\"ipset_entries\":$ipset_count,\"ipset6_entries\":$ipset6_count,\"ipset_udp_entries\":$ipset_udp_count}"
+}
+
+# Domains of the VPN lists that dnsmasq really serves (cloud + own, no duplicates;
+# the own vpn-domains.txt alone missed the cloud lists — "0 domains" on most routers)
+vpn_domains_in_effect() {
+    local n
+    n=$(grep -c '^ipset=/' "$1" 2>/dev/null)
+    echo "${n:-0}"
 }
 
 # Get device statistics
@@ -235,8 +237,7 @@ case "$REQUEST_METHOD" in
                 
                 ipset_count=$(ipset list vpn_domains 2>/dev/null | grep -c '^[0-9]')
                 [ -z "$ipset_count" ] && ipset_count=0
-                domains_count=$(grep -cvE '^[[:space:]]*$|^[[:space:]]*#' "$VPN_DOMAINS_TCPUDP" 2>/dev/null)
-                [ -z "$domains_count" ] && domains_count=0
+                domains_count=$(vpn_domains_in_effect "$DNSMASQ_VPN_DOMAINS")
                 
                 json_success "{\"mode\":\"singbox\",\"vpn_running\":$ss_running,\"ipset_entries\":$ipset_count,\"domains\":$domains_count}"
                 ;;
@@ -245,26 +246,14 @@ case "$REQUEST_METHOD" in
                 # Traffic statistics via sing-box Clash API
                 SINGBOX_API="http://127.0.0.1:9090"
                 
-                # /traffic - streaming endpoint, use timeout and take first line
-                # timeout may not be available, so we use --max-time
-                TRAFFIC_DATA=$(curl -s --connect-timeout 1 --max-time 1 "${SINGBOX_API}/traffic" 2>/dev/null | head -1)
-                CONNECTIONS=$(curl -s --connect-timeout 2 --max-time 3 "${SINGBOX_API}/connections" 2>/dev/null)
-                
-                UP=0
-                DOWN=0
-                if [ -n "$TRAFFIC_DATA" ]; then
-                    # Extract data from first line
-                    UP=$(echo "$TRAFFIC_DATA" | grep -oE '"up":[0-9]+' | head -1 | cut -d: -f2)
-                    DOWN=$(echo "$TRAFFIC_DATA" | grep -oE '"down":[0-9]+' | head -1 | cut -d: -f2)
-                    [ -z "$UP" ] && UP=0
-                    [ -z "$DOWN" ] && DOWN=0
-                fi
-                
-                # Number of active connections
-                CONN_COUNT=0
+                # Totals since sing-box started and the open connections — one /connections
+                # call. (/traffic streams its first line only after a second: read with a 1 s
+                # limit it never came, the panel always showed 0 B)
+                CONNECTIONS=$(curl -s --connect-timeout 2 --max-time 5 "${SINGBOX_API}/connections" 2>/dev/null)
+                UP=0; DOWN=0; CONN_COUNT=0
                 if [ -n "$CONNECTIONS" ]; then
-                    CONN_COUNT=$(echo "$CONNECTIONS" | jq '.connections | length' 2>/dev/null)
-                    [ -z "$CONN_COUNT" ] && CONN_COUNT=0
+                    set -- $(printf '%s' "$CONNECTIONS" | jq -r '"\(.uploadTotal // 0) \(.downloadTotal // 0) \((.connections // []) | length)"' 2>/dev/null)
+                    [ $# -eq 3 ] && { UP=$1; DOWN=$2; CONN_COUNT=$3; }
                 fi
                 
                 json_success "{\"upload\":$UP,\"download\":$DOWN,\"connections\":$CONN_COUNT,\"api_available\":true}"
