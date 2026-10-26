@@ -5079,4 +5079,6 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 .multi-limit-menu button.on { border-color: var(--accent-primary); color: var(--accent-primary); }
 .multi-limit-menu input { width: 4.5rem; padding: 0.25rem 0.4rem; font-size: 0.8rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); }
 /* the "PRO" tag on the lists table tab (owner, 27.10) */
-.pro-badge { margin-left: 0.35rem; padding: 0.05rem 0.32rem; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em; line-height: 1.3; border-radius: 4px; color: #1a1200; background: linear-gradient(135deg, #f7c948, #f0a020); vertical-align: middle; }
+/* a thin outline in the panel accent: "for advanced users", not "paid" (gold read as a paid option next to Donate) */
+.pro-badge { margin-left: 0.35rem; padding: 0 0.3rem; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; line-height: 1.35; border-radius: 4px; color: var(--accent-primary); border: 1px solid var(--accent-primary); background: transparent; vertical-align: middle; }
+.subtab.active .pro-badge { color: #2b3038; border-color: #2b3038; }
