@@ -4647,11 +4647,9 @@
         }
         // the server's role, one choice: main / reserve / only for chosen domains
         // ("fastest" has no main: automatic / only for chosen domains)
-        if (row.domainOnly) {
-            // chosen for domains in the table, not ticked for the group: no role to pick
-            badge = `<span class="multi-badge reserved-role">${t('role.badge')}</span>`;
-        } else if (!pendingAdd && !pendingRemove) {
-            const cur = row.reserved ? 'domains' : isPrimary ? 'main' : 'reserve';
+        if (!pendingAdd && !pendingRemove) {
+            // a server chosen only for domains can join the group too: as a reserve or main
+            const cur = row.reserved || row.domainOnly ? 'domains' : isPrimary ? 'main' : 'reserve';
             const o = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
             badge = `<select class="lt-select multi-role-select ${cur}" data-multi-role="${escapeHtml(id)}" title="${escapeHtml(t('role.title'))}">
                 ${fastest ? '' : o('main', t('multi.statusMain'))}${o('reserve', fastest ? t('role.autoShort') : t('multi.statusReserve'))}${o('domains', t('role.reservedShort'))}</select>`;
@@ -4775,6 +4773,11 @@
             list.querySelectorAll('select[data-multi-role]').forEach(sel => sel.addEventListener('change', () => {
                 const id = sel.dataset.multiRole, v = sel.value;
                 const wasMain = String((multiState.draft || multiState).primary) === String(id) && multiState.strategy !== 'fastest';
+                // chosen for domains only, not in the group: joins it (Apply, like a ticked server)
+                if (!isReserved(id) && !multiEffectiveById(id)) {
+                    if (v === 'main' || v === 'reserve') { multiToggleServer(id, true); if (v === 'main') multiSetPrimary(id); }
+                    return;
+                }
                 if (v === 'main') {
                     // a server back from "chosen domains" joins the group in the background first
                     if (isReserved(id)) { setServerRole(id, false); showToast(t('role.mainLater'), 'info', 6000); } else multiSetPrimary(id);
