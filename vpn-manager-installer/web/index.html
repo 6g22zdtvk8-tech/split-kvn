@@ -667,7 +667,8 @@
                         <!-- B44: the lists as one table (listtable.cgi) -->
                         <div id="subtab-list-table" class="subtab-content active">
                             <div class="lt-toolbar">
-                                <input type="search" id="lt-search" class="lt-search" data-i18n-placeholder="lt.search" placeholder="Search: domain, subnet, group…" autocomplete="off">
+                                <label class="lt-search-wrap"><span class="lt-search-icon" aria-hidden="true">🔍</span>
+                                <input type="search" id="lt-search" class="lt-search" data-i18n-placeholder="lt.search" placeholder="Search: domain, subnet, group…" autocomplete="off"></label>
                                 <div class="lt-chips" id="lt-chips">
                                     <button type="button" class="lt-chip active" data-lt-kind="all" data-i18n="lt.all">All</button>
                                     <button type="button" class="lt-chip" data-lt-kind="domain" data-i18n="lt.domains">Domains</button>
@@ -681,14 +682,20 @@
                                     <button type="button" class="lt-chip active" id="lt-group-toggle" data-i18n="lt.byGroups">By groups</button>
                                 </div>
                             </div>
+                            <!-- adding an own entry: behind a button, so it is not taken for a second search -->
                             <div class="lt-add">
+                                <button type="button" class="btn btn-sm btn-secondary" id="lt-add-open" data-i18n="lt.addOpen">+ Add a domain or subnet</button>
+                                <span class="lt-status" id="lt-status"></span>
+                            </div>
+                            <div class="lt-add-form hidden" id="lt-add-form">
+                                <span class="lt-add-label" data-i18n="lt.addLabel">New own entry:</span>
                                 <input type="text" id="lt-add-value" class="lt-add-input" data-i18n-placeholder="lt.addPlaceholder" placeholder="example.com or 203.0.113.0/24" autocomplete="off">
                                 <select id="lt-add-proto" class="lt-select">
                                     <option value="tcpudp" data-i18n="lt.protoAll">TCP and UDP</option>
                                     <option value="udp" data-i18n="lt.protoUdp">UDP only</option>
                                 </select>
-                                <button type="button" class="btn btn-sm btn-secondary" id="lt-add-btn" data-i18n="lt.add">+ Add</button>
-                                <span class="lt-status" id="lt-status"></span>
+                                <button type="button" class="btn btn-sm btn-primary" id="lt-add-btn" data-i18n="lt.addDo">Add</button>
+                                <button type="button" class="btn btn-sm btn-secondary" id="lt-add-cancel" data-i18n="lt.addCancel">Cancel</button>
                             </div>
                             <div class="lt-bulk hidden" id="lt-bulk">
                                 <strong id="lt-bulk-count"></strong>

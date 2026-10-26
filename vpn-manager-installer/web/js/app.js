@@ -76,6 +76,10 @@
             'lt.protoAll': "TCP and UDP",
             'lt.protoUdp': "UDP only",
             'lt.add': "+ Add",
+            'lt.addOpen': '+ Add a domain or subnet',
+            'lt.addLabel': 'New own entry:',
+            'lt.addDo': 'Add',
+            'lt.addCancel': 'Cancel',
             'lt.enable': "Switch on",
             'lt.disable': "Switch off",
             'lt.deleteOwn': "Delete own",
@@ -1298,6 +1302,10 @@
             'lt.protoAll': "TCP и UDP",
             'lt.protoUdp': "Только UDP",
             'lt.add': "+ Добавить",
+            'lt.addOpen': '+ Добавить домен или подсеть',
+            'lt.addLabel': 'Новая своя запись:',
+            'lt.addDo': 'Добавить',
+            'lt.addCancel': 'Отмена',
             'lt.enable': "Включить",
             'lt.disable': "Выключить",
             'lt.deleteOwn': "Удалить мои",
@@ -6115,11 +6123,19 @@
             const kind = /^[0-9.]+(\/\d+)?$|^[0-9a-f:]+(\/\d+)?$/i.test(raw) && /[\d:]/.test(raw[0]) ? 'subnet' : 'domain';
             try {
                 await ltPost('add', { value: raw, kind, proto: $('#lt-add-proto')?.value || 'tcpudp' });
-                input.value = '';
+                addForm(false);
                 ltStatus(t('lt.added', { v: raw }));
                 setTimeout(() => loadListTable(true), 800);
             } catch (e) { ltErr(e); }
         };
+        const addForm = (open) => {
+            $('#lt-add-form')?.classList.toggle('hidden', !open);
+            $('#lt-add-open')?.classList.toggle('hidden', open);
+            if (open) $('#lt-add-value')?.focus();
+            else { const i = $('#lt-add-value'); if (i) i.value = ''; }
+        };
+        $('#lt-add-open')?.addEventListener('click', () => addForm(true));
+        $('#lt-add-cancel')?.addEventListener('click', () => { addForm(false); ltStatus(''); });
         $('#lt-add-btn')?.addEventListener('click', add);
         $('#lt-add-value')?.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
     }
