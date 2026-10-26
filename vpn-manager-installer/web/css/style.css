@@ -4593,7 +4593,8 @@ a.link:hover {
     display: grid;
     /* last column holds two icon buttons (check + remove), ~3.5rem; the delay column
        fits "Not checked" — narrower values used to spill over the buttons (B33) */
-    grid-template-columns: 8px minmax(0, 1fr) 5.75rem 9.5rem 5.75rem 3.75rem;
+    /* badge column holds the role choice (main / reserve / only for chosen domains) */
+    grid-template-columns: 8px minmax(0, 1fr) 12.5rem 6.75rem 5.75rem 3.75rem;
     grid-template-areas: "dot name badge slot delay remove";
     align-items: center;
     gap: 0.625rem;
@@ -5066,6 +5067,9 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 .ltm-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 55vh; overflow-y: auto; margin-bottom: 0.5rem; }
 .ltm-item { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0; cursor: pointer; }
 .multi-badge.reserved-role { color: #f0b429; border-color: rgba(240, 180, 41, 0.6); }
-.multi-role-select { width: 14rem; max-width: 100%; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
+.multi-row .multi-role-select { grid-area: badge; width: 100%; max-width: 100%; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
 .multi-role-select.main { border-color: var(--accent-primary); color: var(--accent-primary); }
 .multi-role-select.domains { border-color: rgba(240, 180, 41, 0.6); color: #f0b429; }
+@media (max-width: 600px) {
+    .multi-row .multi-role-select { width: 12.5rem; justify-self: end; }
+}

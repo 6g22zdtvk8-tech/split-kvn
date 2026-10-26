@@ -131,8 +131,8 @@
             'role.auto': 'automatic ⇄',
             'role.reserved': 'only for chosen domains ⇄',
             'role.title': 'Role of the server: automatic — takes part in automatic switching; only for chosen domains — never switched to automatically, only domains you send to it use it. Click to change.',
-            'role.setReserved': 'The server now serves only the domains you send to it',
-            'role.setAuto': 'The server takes part in automatic switching again',
+            'role.setReserved': 'The server now serves only the domains you send to it. sing-box restarts: the internet blinks for a couple of seconds',
+            'role.setAuto': 'The server takes part in automatic switching again. sing-box restarts: the internet blinks for a couple of seconds',
             'role.sep': 'Only for chosen domains',
             'role.badge': 'Chosen domains',
             'role.autoShort': 'Automatic',
@@ -1378,8 +1378,8 @@
             'role.auto': 'автоматически ⇄',
             'role.reserved': 'только для выбранных доменов ⇄',
             'role.title': 'Роль сервера: «автоматически» — участвует в автопереключении; «только для выбранных доменов» — автоматически на него не переключается, через него идут только домены, которые вы на него направили. Нажмите, чтобы сменить.',
-            'role.setReserved': 'Сервер теперь только для выбранных доменов',
-            'role.setAuto': 'Сервер снова участвует в автопереключении',
+            'role.setReserved': 'Сервер теперь только для выбранных доменов. sing-box перезапускается — интернет моргнёт на пару секунд',
+            'role.setAuto': 'Сервер снова участвует в автопереключении. sing-box перезапускается — интернет моргнёт на пару секунд',
             'role.sep': 'Только для выбранных доменов',
             'role.badge': 'Для доменов',
             'role.autoShort': 'Автоматически',
@@ -3295,7 +3295,7 @@
             state.reservedIds = new Set((r.data?.reserved || []).map(String));
             renderConfigs();
             renderMultiUI();
-            showToast(t(reserved ? 'role.setReserved' : 'role.setAuto'), 'success', 4000);
+            showToast(t(reserved ? 'role.setReserved' : 'role.setAuto'), 'success', 6000);
             // the shared group is rebuilt in the background
             setTimeout(() => { if (typeof loadMultiState === 'function') loadMultiState(); }, 4000);
         } catch (e) { showToast(e.message || 'Error', 'error'); }
