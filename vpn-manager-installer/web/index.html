@@ -460,19 +460,20 @@
                                 <button class="btn btn-sm btn-secondary" id="multi-check-btn" data-i18n-title="multi.checkNowTitle"></button>
                             </div>
                         </div>
-                        <!-- B42: who leads — the main server, or the fastest by the check every minute -->
-                        <div class="multi-strategy" id="multi-strategy" role="radiogroup">
-                            <button type="button" class="multi-strategy-btn active" role="radio" aria-checked="true" data-multi-strategy="primary" data-i18n="multi.strategyPrimary">Main server</button>
-                            <button type="button" class="multi-strategy-btn" role="radio" aria-checked="false" data-multi-strategy="fastest" data-i18n="multi.strategyFastest">Fastest</button>
+                        <!-- B42: who leads — the main server, or the fastest by the check every minute;
+                             the switch threshold sits next to it and wraps below on a narrow screen -->
+                        <div class="multi-strategy-row">
+                            <div class="multi-strategy" id="multi-strategy" role="radiogroup">
+                                <button type="button" class="multi-strategy-btn active" role="radio" aria-checked="true" data-multi-strategy="primary" data-i18n="multi.strategyPrimary">Main server</button>
+                                <button type="button" class="multi-strategy-btn" role="radio" aria-checked="false" data-multi-strategy="fastest" data-i18n="multi.strategyFastest">Fastest</button>
+                            </div>
+                            <div class="multi-tolerance" id="multi-tolerance">
+                                <span data-i18n="multi.tolBefore">Switch to another server when it is faster by</span>
+                                <select class="lt-select" id="multi-tolerance-select"></select>
+                                <span data-i18n="multi.tolAfter">ms</span>
+                            </div>
                         </div>
                         <div class="multi-strategy-hint" id="multi-strategy-hint"></div>
-                        <!-- how much faster another server must be before "fastest" (and the domains'
-                             "several servers") switch to it -->
-                        <div class="multi-tolerance" id="multi-tolerance">
-                            <span data-i18n="multi.tolBefore">Switch to another server when it is faster by</span>
-                            <select class="lt-select" id="multi-tolerance-select"></select>
-                            <span data-i18n="multi.tolAfter">ms</span>
-                        </div>
                         <div class="multi-list" id="multi-list"></div>
                         <div class="auto-update-info" id="multi-info"></div>
                     </div>
