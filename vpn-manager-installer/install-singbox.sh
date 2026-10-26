@@ -1048,6 +1048,15 @@ setup_logrotate() {
         log_ok "Lists auto-update configured (daily at 4:00)"
     fi
 
+    # B44: entries switched on/off in the panel (list-overrides.json); the first run makes
+    # the original copies of the cloud lists the filtered files are built from
+    if [ -f "$SCRIPT_DIR/scripts/list-overrides.sh" ]; then
+        mkdir -p "$VPN_MANAGER_HOME/scripts"
+        sed 's/\r$//' "$SCRIPT_DIR/scripts/list-overrides.sh" > "$VPN_MANAGER_HOME/scripts/list-overrides.sh"
+        chmod +x "$VPN_MANAGER_HOME/scripts/list-overrides.sh"
+        "$VPN_MANAGER_HOME/scripts/list-overrides.sh" remote >/dev/null 2>&1
+    fi
+
     # B1: "Russia" list set — its script and default lists (existing lists are kept)
     if [ -f "$SCRIPT_DIR/scripts/direct-lists.sh" ]; then
         mkdir -p "$VPN_MANAGER_HOME/scripts"

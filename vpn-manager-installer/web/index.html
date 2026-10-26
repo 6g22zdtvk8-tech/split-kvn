@@ -651,7 +651,10 @@
 
                         <!-- B25: domains and subnets in one row of tabs -->
                         <nav class="subtabs lists-subtabs">
-                            <button class="subtab active" data-subtab="domains-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.domainsTcpUdp">Domains</span></button>
+                            <!-- B44: all lists of the set as one table (default); the four editors below are the text mode -->
+                            <button class="subtab subtab-table active" data-subtab="list-table"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg><span data-i18n="subtab.listTable">Table</span></button>
+                            <span class="subtab-sep" aria-hidden="true"></span>
+                            <button class="subtab" data-subtab="domains-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.domainsTcpUdp">Domains</span></button>
                             <button class="subtab" data-subtab="domains-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.domainsUdp">Domains UDP</span></button>
                             <button class="subtab" data-subtab="subnets-tcpudp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span data-i18n="subtab.subnetsTcpUdp">Subnets</span></button>
                             <button class="subtab" data-subtab="subnets-udponly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-i18n="subtab.subnetsUdp">Subnets UDP</span></button>
@@ -661,7 +664,60 @@
                         </nav>
                     
                         <!-- TCP+UDP domains -->
-                        <div id="subtab-domains-tcpudp" class="subtab-content active">
+                        <!-- B44: the lists as one table (listtable.cgi) -->
+                        <div id="subtab-list-table" class="subtab-content active">
+                            <div class="lt-toolbar">
+                                <input type="search" id="lt-search" class="lt-search" data-i18n-placeholder="lt.search" placeholder="Search: domain, subnet, group…" autocomplete="off">
+                                <div class="lt-chips" id="lt-chips">
+                                    <button type="button" class="lt-chip active" data-lt-kind="all" data-i18n="lt.all">All</button>
+                                    <button type="button" class="lt-chip" data-lt-kind="domain" data-i18n="lt.domains">Domains</button>
+                                    <button type="button" class="lt-chip" data-lt-kind="subnet" data-i18n="lt.subnets">Subnets</button>
+                                    <span class="lt-chip-sep"></span>
+                                    <button type="button" class="lt-chip" data-lt-src="cloud" data-i18n="lt.cloud">Cloud</button>
+                                    <button type="button" class="lt-chip" data-lt-src="mine" data-i18n="lt.mine">Mine</button>
+                                    <button type="button" class="lt-chip" data-lt-off="1"><span data-i18n="lt.offOnly">Switched off</span> <span id="lt-off-count"></span></button>
+                                    <button type="button" class="lt-chip" data-lt-changed="1"><span data-i18n="lt.changedOnly">Changed</span> <span id="lt-changed-count"></span></button>
+                                    <span class="lt-chip-sep"></span>
+                                    <button type="button" class="lt-chip active" id="lt-group-toggle" data-i18n="lt.byGroups">By groups</button>
+                                </div>
+                            </div>
+                            <div class="lt-add">
+                                <input type="text" id="lt-add-value" class="lt-add-input" data-i18n-placeholder="lt.addPlaceholder" placeholder="example.com or 203.0.113.0/24" autocomplete="off">
+                                <select id="lt-add-proto" class="lt-select">
+                                    <option value="tcpudp" data-i18n="lt.protoAll">TCP and UDP</option>
+                                    <option value="udp" data-i18n="lt.protoUdp">UDP only</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-secondary" id="lt-add-btn" data-i18n="lt.add">+ Add</button>
+                                <span class="lt-status" id="lt-status"></span>
+                            </div>
+                            <div class="lt-bulk hidden" id="lt-bulk">
+                                <strong id="lt-bulk-count"></strong>
+                                <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="on" data-i18n="lt.enable">Switch on</button>
+                                <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="off" data-i18n="lt.disable">Switch off</button>
+                                <span class="lt-bulk-via" id="lt-bulk-via-wrap"><span data-i18n="lt.colVia">Connection</span>: <select id="lt-bulk-via" class="lt-select"></select></span>
+                                <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="delete" id="lt-bulk-delete" data-i18n="lt.deleteOwn">Delete own</button>
+                                <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="reset" data-i18n="lt.reset">Reset to default</button>
+                                <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="clear" data-i18n="lt.clearSel">Clear selection</button>
+                            </div>
+                            <div class="lt-note hidden" id="lt-cloud-note" data-i18n="lt.cloudInactive">Automatic list updates are off: the cloud entries are shown, but the router does not use them.</div>
+                            <div class="lt-wrap">
+                                <table class="lt-table">
+                                    <thead><tr>
+                                        <th class="lt-c-sel"><input type="checkbox" id="lt-sel-all" aria-label="all"></th>
+                                        <th data-lt-sort="v"><span data-i18n="lt.colEntry">Domain / subnet</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="group"><span data-i18n="lt.colGroup">Group</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="kind"><span data-i18n="lt.colType">Type</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="src"><span data-i18n="lt.colSource">Source</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="on"><span data-i18n="lt.colOn">On</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="via" class="lt-c-via"><span data-i18n="lt.colVia">Connection</span> <span class="lt-arrow"></span></th>
+                                    </tr></thead>
+                                    <tbody id="lt-body"></tbody>
+                                </table>
+                            </div>
+                            <p class="lt-legend" data-i18n="lt.legend">A switched-off entry acts as if it were not in the list. Shift+click selects a range, the box at a group selects the group, the box in the header — everything found.</p>
+                        </div>
+
+                        <div id="subtab-domains-tcpudp" class="subtab-content hidden">
                             <!-- B1: text follows the selected mode (updateListModeUI) -->
                             <p class="section-description" id="domains-desc-tcpudp">All traffic to these sites goes through VPN.</p>
                         
@@ -1143,6 +1199,24 @@
 
     <!-- Modals -->
     <div id="modal-overlay" class="modal-overlay hidden">
+        <!-- B44 stage 3: dedicated groups of servers for chosen entries -->
+        <div id="lt-groups-modal" class="modal modal-lg hidden">
+            <div class="modal-header">
+                <h3 data-i18n="lt.groupsTitle">Dedicated groups</h3>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="section-description" data-i18n="lt.groupsDesc">Entries sent to a dedicated group go through the fastest of its servers; while none of them answers — the way of the shared group. The shared group never switches to these servers on its own.</p>
+                <div id="lt-groups-list" class="ltg-list"></div>
+                <button type="button" class="btn btn-sm btn-secondary" id="lt-groups-add" data-i18n="lt.groupsAdd">+ New group</button>
+                <div class="validation-message" id="lt-groups-msg"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close data-i18n="dialog.cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="lt-groups-save" data-i18n="domains.save">Save</button>
+            </div>
+        </div>
+
         <!-- Add/Edit configuration modal -->
         <div id="config-modal" class="modal modal-lg hidden">
             <div class="modal-header">

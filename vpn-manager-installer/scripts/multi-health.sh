@@ -37,6 +37,33 @@ if [ -n "$_sb" ]; then
     fi
 fi
 
+# B44: entries sent through a chosen server or dedicated group (selectors via-* = [own way, vpn]): the
+# server does not answer → the selector goes to the group's way; it answers again → back
+_api="http://127.0.0.1:9090"
+for _sel in $(curl -s -m 5 "$_api/proxies" 2>/dev/null | jq -r '.proxies | keys[] | select(startswith("via-"))' 2>/dev/null); do
+    # its own way first (x-<id> or a dedicated group vg-gN), the shared group last
+    _info=$(curl -s -m 5 "$_api/proxies/$_sel")
+    _x=$(printf '%s' "$_info" | jq -r '.all[0] // empty')
+    _now=$(printf '%s' "$_info" | jq -r '.now // empty')
+    _all=$(printf '%s' "$_info" | jq -r '.all[-1] // empty')
+    [ -n "$_x" ] || continue
+    # a dedicated group is fine while any of its servers answers (the group check also
+    # tells urltest which one); a single server must answer itself
+    case "$_x" in
+        vg-*) _ok=$(curl -s -m 15 "$_api/group/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '[.[]? | select(. > 0)] | length > 0' >/dev/null 2>&1 && echo 1) ;;
+        *)    _ok=$(curl -s -m 12 "$_api/proxies/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '(.delay // 0) > 0' >/dev/null 2>&1 && echo 1) ;;
+    esac
+    if [ "$_ok" = 1 ]; then
+        _want="$_x"
+    else
+        _want="$_all"
+    fi
+    if [ -n "$_want" ] && [ "$_want" != "$_now" ]; then
+        curl -s -m 5 -X PUT -H 'Content-Type: application/json' -d "{\"name\":\"$_want\"}" "$_api/proxies/$_sel" >/dev/null 2>&1 &&
+            logger -t vpn-manager "B44: $_sel → $_want"
+    fi
+done
+
 jq -e '.mode == "multi"' "$MULTI_FILE" >/dev/null 2>&1 || exit 0
 # "fastest" (B42): no main server to watch, sing-box picks the server itself
 jq -e '.strategy == "fastest"' "$MULTI_FILE" >/dev/null 2>&1 && exit 0

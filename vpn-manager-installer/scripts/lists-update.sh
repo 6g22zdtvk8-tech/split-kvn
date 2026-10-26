@@ -78,7 +78,10 @@ check_vpn_active() {
 download_file() {
     local filename="$1"
     local url="$GITHUB_BASE/$filename"
-    local output="$REMOTE_LISTS_DIR/$filename"
+    # B44: the download is the original; remote-lists/<file> is it minus the entries
+    # switched off in the panel (list-overrides.sh remote, after all files are in)
+    mkdir -p "$REMOTE_LISTS_DIR/orig"
+    local output="$REMOTE_LISTS_DIR/orig/$filename"
     local tmp_file="/tmp/lists-update-$filename"
     
     log "Downloading $filename..."
@@ -127,6 +130,14 @@ download_all() {
     done
     
     log "Downloaded: $success, errors: $failed"
+    local lo="$VPN_MANAGER_DIR/scripts/list-overrides.sh"
+    if [ -x "$lo" ]; then
+        "$lo" remote
+    else
+        for file in $REMOTE_FILES; do
+            [ -f "$REMOTE_LISTS_DIR/orig/$file" ] && cp "$REMOTE_LISTS_DIR/orig/$file" "$REMOTE_LISTS_DIR/$file"
+        done
+    fi
     
     [ $failed -eq 0 ]
 }
@@ -276,6 +287,40 @@ update_vpnclient_routing() {
     )
 }
 
+# B44: entries switched on/off in the panel — the same as a lists update, without the
+# download. Addresses already in the VPN ipsets are dropped (a switched-off domain must
+# stop going through the VPN now, not in 24 h) and filled again by the warm-up.
+# sing-box restarts only if its own rules changed.
+reapply_changes() {
+    log "Re-applying the lists (entries switched on/off)..."
+    regenerate_dnsmasq_configs
+    local dl="$VPN_MANAGER_DIR/scripts/direct-lists.sh"
+    if [ -x "$dl" ]; then
+        "$dl" dnsmasq
+        "$dl" subnets
+    fi
+    /opt/etc/init.d/S56dnsmasq restart >/dev/null 2>&1
+    local s
+    for s in vpn_domains vpn_domains6 vpn_domains_udp vpn_domains6_udp direct_domains direct_domains6 direct_domains_udp direct_domains6_udp; do
+        ipset flush "$s" 2>/dev/null
+    done
+    [ -x /opt/etc/init.d/S98singbox-rules ] && /opt/etc/init.d/S98singbox-rules reload-subnets >/dev/null 2>&1
+    local common_sh="/opt/share/www/vpn-manager/api/common.sh"
+    if [ -f "$common_sh" ]; then
+        (
+            cd "$(dirname "$common_sh")" && . "$common_sh"
+            prev="/tmp/lists-reapply.prev.$$"
+            cp "$SINGBOX_CONFIG" "$prev" 2>/dev/null
+            if update_vpnclient_rules && ! cmp -s "$prev" "$SINGBOX_CONFIG"; then
+                check_singbox_running && singbox_restart && log "sing-box restarted (rules changed)"
+            fi
+            rm -f "$prev"
+        )
+    fi
+    [ -x /opt/etc/init.d/S98singbox-rules ] && /opt/etc/init.d/S98singbox-rules warmup >/dev/null 2>&1
+    log "Lists re-applied"
+}
+
 # Apply changes (regenerate dnsmasq, warmup, etc.)
 apply_changes() {
     log "Applying changes..."
@@ -377,6 +422,9 @@ case "$1" in
     check)
         check_vpn_active && check_singbox_running && echo "OK" || echo "UNAVAILABLE"
         ;;
+    reapply)
+        reapply_changes
+        ;;
     status)
         if [ -f "$SETTINGS_FILE" ]; then
             jq -r '.last_lists_update // "never"' "$SETTINGS_FILE"
@@ -385,7 +433,7 @@ case "$1" in
         fi
         ;;
     *)
-        echo "Usage: $0 {update|force|check|status}"
+        echo "Usage: $0 {update|force|reapply|check|status}"
         exit 1
         ;;
 esac

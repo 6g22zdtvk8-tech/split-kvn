@@ -624,17 +624,22 @@ multi_catalog() {
 # The servers sing-box runs: ticked servers first, then the servers of ticked
 # subscriptions; no duplicates, at most MULTI_LIMIT. WireGuard/AmneziaWG take part as
 # endpoints (sing-box groups accept endpoint tags like outbound tags).
-# Prints {ids: [...], truncated: N}
+# Servers of a B44 dedicated group in use are left out (they serve only their entries),
+# unless that would leave the group with none.
+# Prints {ids: [...], truncated: N, dedicated: [...]}
 multi_effective() {
     local state="${1:-$(multi_state)}"
-    multi_catalog | jq -c --argjson st "$state" --argjson limit "$MULTI_LIMIT" '
+    local ded=$(dedicated_ids)
+    multi_catalog | jq -c --argjson st "$state" --argjson limit "$MULTI_LIMIT" --argjson ded "${ded:-[]}" '
         . as $cat
         | $cat as $ok
         | ($ok | map(.id)) as $okids
         | ([$st.members[] | select(. as $m | $okids | index($m))]
            + [$ok[] | select(.subscription_id as $s | $s != "" and ($st.subscriptions | index($s))) | .id])
         | reduce .[] as $i ([]; if index($i) then . else . + [$i] end)
-        | {ids: .[:$limit], truncated: ((length - $limit) | if . > 0 then . else 0 end)}'
+        | (map(select(. as $i | $ded | index($i) | not))) as $shared
+        | (if ($shared | length) > 0 then $shared else . end)
+        | {ids: .[:$limit], truncated: ((length - $limit) | if . > 0 then . else 0 end), dedicated: $ded}'
 }
 
 # Build the multi-mode outbounds and write them into the sing-box config.
@@ -1448,6 +1453,7 @@ apply_singbox_vpn_items() {
         if [ -s "$tmp_config" ] && jq empty "$tmp_config" 2>/dev/null; then
             mv "$tmp_config" "$SINGBOX_CONFIG"
             chmod 644 "$SINGBOX_CONFIG"
+            apply_via_rules
             log_action "SINGBOX_CONFIG" "Applied outbound: $tag (with DNS detour and rules, local DNS: udp://127.0.0.1:$(dnsmasq_port))"
         else
             rm -f "$tmp_config"
@@ -2515,6 +2521,136 @@ update_dnsmasq_domains() {
 # Called when vpn-domains.txt, vpn-subnets.txt or VPN server policy changes
 # Parameters:
 #   $1 - policy (optional, if not specified - read from routing_policies.json)
+# =============================================================================
+# B44 stage 2: an entry of the VPN lists through a chosen server
+# =============================================================================
+# list-overrides.json "via": {"<domain or subnet>": "<config id>" | "g:<group name>"},
+# "groups": {"<name>": [<config id>…]} — dedicated groups (stage 3). Per chosen server:
+#   x-<id>   its own connection (built from the config file, like any server); a server
+#            the shared group runs is used as its m-<id> instead
+#   via-<id> selector [x-<id>, vpn]: multi-health.sh checks x-<id> every minute and
+#            switches it to the group's way (main / fastest) while the server is down,
+#            back to the server when it answers again — through the Clash API, no restart.
+#            (A fallback group reacts only after a connection hangs for its full timeout.)
+#   vg-gN    a dedicated group: urltest of its servers (only those, never the shared
+#            group's); via-gN = selector [vg-gN, vpn], the same check moves it to the
+#            shared group only while none of its servers answers. Its servers leave the
+#            shared group (multi_effective), so it never switches to them
+# Rules "entry → via-<id>" come right after the sniff rules, for every inbound that sends
+# list traffic to the VPN: home devices (tun-in, so it gets a sniff too), the VPN server
+# and the device policies except Direct. Rebuilt from scratch on every call, removed
+# completely when nothing is chosen.
+LIST_OVERRIDES="$VPN_MANAGER_HOME/list-overrides.json"
+
+# Servers of the dedicated groups some entry goes through (JSON array of config ids)
+dedicated_ids() {
+    [ -s "$LIST_OVERRIDES" ] || { echo '[]'; return; }
+    jq -c '([(.off // [])[] | strings | ltrimstr("*.") | ltrimstr("*")]) as $off
+        | ((.via // {}) | with_entries(select(.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not))
+           | [.[] | strings | select(startswith("g:")) | ltrimstr("g:")] | unique) as $used
+        | [(.groups // {}) | to_entries[] | select(.key as $k | $used | index($k)) | (.value // [])[] | strings] | unique' \
+        "$LIST_OVERRIDES" 2>/dev/null || echo '[]'
+}
+
+apply_via_rules() {
+    [ -f "$SINGBOX_CONFIG" ] || return 1
+    local ov='{}'
+    [ -s "$LIST_OVERRIDES" ] && ov=$(jq -c '([(.off // [])[] | strings | ltrimstr("*.") | ltrimstr("*")]) as $off
+                                            | {via: ((.via // {}) | with_entries(select((.value | type) == "string" and .value != ""
+                                                       and (.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not)))),
+                                              groups: ((.groups // {}) | with_entries(select((.value | type) == "array"))),
+                                              off: [(.off // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
+    [ -n "$ov" ] || ov='{}'
+    # dedicated groups in use get a short tag by name order: g1, g2…
+    local gmap
+    gmap=$(printf '%s' "$ov" | jq -c '((.via // {}) | [.[] | select(startswith("g:")) | ltrimstr("g:")] | unique) as $used
+        | [(.groups // {}) | keys[] | select(. as $k | $used | index($k))] | to_entries | map({key: .value, value: ("g" + ((.key + 1) | tostring))}) | from_entries')
+    [ -n "$gmap" ] || gmap='{}'
+    # servers needed: chosen directly, or members of a dedicated group in use. A server the
+    # shared group already runs (m-<id>) is used as it is: the same WireGuard key twice in
+    # one config would fight over the tunnel
+    local have items="[]" id out
+    have=$(jq -c '[((.outbounds // []) + (.endpoints // []))[].tag // empty | select(startswith("m-")) | ltrimstr("m-")]' "$SINGBOX_CONFIG" 2>/dev/null)
+    [ -n "$have" ] || have='[]'
+    # one-server mode: the active server runs as "vpn"
+    local single=""
+    if ! multi_is_on && [ -s "$ACTIVE_CONFIG" ]; then
+        single=$(cat "$ACTIVE_CONFIG" 2>/dev/null)
+        jq -e '[((.outbounds // []) + (.endpoints // []))[].tag] | index("vpn")' "$SINGBOX_CONFIG" >/dev/null 2>&1 || single=""
+    fi
+    for id in $(printf '%s' "$ov" | jq -r --argjson gm "$gmap" '([(.via // {})[] | select(startswith("g:") | not)]
+                + [(.groups // {}) | to_entries[] | select(.key as $k | $gm | has($k)) | .value[]]) | unique | .[]'); do
+        printf '%s' "$have" | jq -e --arg i "$id" 'index($i)' >/dev/null 2>&1 && continue
+        [ "$id" = "$single" ] && continue
+        [ -f "$VPN_CONFIGS_DIR/$id.json" ] || continue
+        out=$(generate_outbound_json "$VPN_CONFIGS_DIR/$id.json" "x-$id")
+        [ -n "$out" ] || continue
+        out=$(printf '%s' "$out" | jq -c 'if .type == "wireguard" then . + {connect_timeout: "10s"} else . + {connect_timeout: "3s"} end') || continue
+        items=$(printf '%s' "$items" | jq -c --argjson o "$out" '. + [$o]')
+    done
+    local tmp="/tmp/singbox_via.$$.json"
+    jq --argjson ov "$ov" --argjson gm "$gmap" --argjson items "$items" --argjson have "$have" --arg single "$single" '
+        def isvia: (.tag // "") | (startswith("x-") or startswith("via-") or startswith("vg-"));
+        # the router jq has no regex: a subnet is digits, dots and a slash, or has a colon
+        def isnet: contains(":") or (explode | all(. == 46 or . == 47 or (. >= 48 and . <= 57)));
+        def bare: ltrimstr("*.") | ltrimstr("*");
+        # config id → its outbound tag: m-<id> from the shared group, or our own x-<id>
+        ((reduce $have[] as $h ({}; . + {($h): ("m-" + $h)}))
+         + (if $single != "" then {($single): "vpn"} else {} end)
+         + (reduce $items[] as $o ({}; . + {($o.tag | ltrimstr("x-")): $o.tag}))) as $tagof
+        | ($ov.off // [] | map(bare)) as $off
+        | (.route.final // "vpn") as $group
+        # dedicated groups: their built members (a group left with none is dropped)
+        | ([($ov.groups // {}) | to_entries[] | select(.key as $k | $gm | has($k))
+            | {name: .key, tag: $gm[.key], members: [.value[] | select(. as $m | $tagof | has($m))]} | select(.members | length > 0)]) as $groups
+        # the outbound an entry goes to: via-<id> (one server) or via-<g> (dedicated group);
+        # an entry switched off is not in the lists, so it has no way of its own either
+        | ([($ov.via // {}) | to_entries[] | select(.key | bare | . as $k | $off | index($k) | not)
+            | (if (.value | startswith("g:")) then (.value | ltrimstr("g:")) as $n | ([$groups[] | select(.name == $n) | .tag] | first) as $t
+                  | (if $t then {entry: (.key | bare), out: ("via-" + $t)} else empty end)
+               elif (.value as $v | $tagof | has($v)) then {entry: (.key | bare), out: ("via-" + .value)}
+               else empty end)]
+           | group_by(.out) | map({out: .[0].out, list: (map(.entry) | unique)})) as $per
+        | ([$per[].out | ltrimstr("via-")]) as $used
+        | ([(.inbounds // [])[].tag] | map(select(. == "tun-in" or startswith("ss-server-") or (startswith("policy-") and . != "policy-direct-in")))) as $ins
+        | .endpoints = ([(.endpoints // [])[] | select(isvia | not)] + [$items[] | select(.type == "wireguard")])
+        | (if (.endpoints | length) == 0 then del(.endpoints) else . end)
+        | .outbounds = ([(.outbounds // [])[] | select(isvia | not)]
+                        + [$items[] | select(.type != "wireguard")]
+                        # a dedicated group: the fastest of its servers, re-checked every minute
+                        + [$groups[] | select(.tag as $t | $used | index($t)) | {type: "urltest", tag: ("vg-" + .tag), outbounds: [.members[] | $tagof[.]],
+                            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: 150, idle_timeout: "30m"}]
+                        # the entry way: the server (or the group) first; multi-health.sh switches
+                        # it to the shared group while that does not answer
+                        + [$used[] | . as $u | if startswith("g") and ($tagof | has($u) | not)
+                                     then {type: "selector", tag: ("via-" + .), outbounds: ["vg-" + ., $group], default: ("vg-" + .)}
+                                     else {type: "selector", tag: ("via-" + .), outbounds: (if $tagof[$u] == $group then [$group] else [$tagof[$u], $group] end), default: $tagof[$u]} end])
+        | .route.rules = (
+            [(.route.rules // [])[] | select(((.outbound // "") | startswith("via-") | not) and (.inbound != ["tun-in"] or .action != "sniff"))] as $rest
+            # after the last sniff of an inbound the rules cover: the device policies sniff
+            # further down than home devices and the VPN server
+            | ([$rest | to_entries[] | select(.value.action == "sniff" and ((.value.inbound // []) | any(. as $i | $ins | index($i)))) | .key] | max) as $last
+            | (if $last == null then ($rest | map(.action == "sniff") | index(false) // ($rest | length)) else $last + 1 end) as $cut
+            | (if ($per | length) > 0 then [{inbound: ["tun-in"], action: "sniff"}] else [] end)
+              + $rest[:$cut]
+              + [$per[] | .out as $o
+                  | ([.list[] | select(isnet | not)]) as $doms
+                  | ([.list[] | select(isnet)]) as $nets
+                  | (if ($doms | length) > 0 then {inbound: $ins, domain_suffix: $doms, outbound: $o} else empty end),
+                    (if ($nets | length) > 0 then {inbound: $ins, ip_cidr: $nets, outbound: $o} else empty end)]
+              + $rest[$cut:]
+          )
+    ' "$SINGBOX_CONFIG" > "$tmp" 2>/dev/null
+    if [ -s "$tmp" ] && jq empty "$tmp" 2>/dev/null; then
+        cat "$tmp" > "$SINGBOX_CONFIG"
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    log_action "VIA_RULES" "ERROR: could not build the per-entry connections"
+    return 1
+}
+
 update_vpnclient_rules() {
     if [ ! -f "$SINGBOX_CONFIG" ]; then
         log_action "VPNCLIENT_RULES" "sing-box config not found, skipping"
@@ -2578,6 +2714,7 @@ update_vpnclient_rules() {
     if [ -s "$tmp_config" ] && jq empty "$tmp_config" 2>/dev/null; then
         mv "$tmp_config" "$SINGBOX_CONFIG"
         chmod 644 "$SINGBOX_CONFIG"
+        apply_via_rules
         log_action "VPNCLIENT_RULES" "Updated route rules for ss-server-in"
         # The home panel name follows the segments as well (B8)
         update_panel_name_dns

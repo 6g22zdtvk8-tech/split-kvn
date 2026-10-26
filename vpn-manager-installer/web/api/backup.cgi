@@ -39,7 +39,7 @@ BACKUP_FILES="subscriptions.json active-config settings.json routing_policies.js
 device-routing.json vpn-domains.txt vpn-domains-udp.txt vpn-subnets.txt
 vpn-subnets-udp.txt direct-domains.txt direct-domains-udp.txt direct-subnets.txt
 direct-subnets-udp.txt vpnserver-credentials.json autostart-enabled router-hwid
-multi.json dns-pinned-domains.txt"
+multi.json dns-pinned-domains.txt list-overrides.json"
 # Restore is a full replacement: these are removed when the backup has none
 # (the source router simply did not have them). settings, server users and the
 # HWID are kept instead — losing them would cut off the panel or the clients.
@@ -47,10 +47,10 @@ multi.json dns-pinned-domains.txt"
 # the router's lists on such a restore would be a loss, not a restore.
 REPLACED_WHEN_ABSENT="subscriptions.json active-config routing_policies.json
 device-routing.json vpn-domains.txt vpn-domains-udp.txt vpn-subnets.txt
-vpn-subnets-udp.txt autostart-enabled"
+vpn-subnets-udp.txt autostart-enabled list-overrides.json"
 
 # Every archive entry must match this; anything else rejects the whole file
-ALLOWED_ENTRY_RE='^(\./)?$|^(\./)?configs/?$|^(\./)?configs/[A-Za-z0-9_.@+-]+\.json$|^(\./)?(manifest\.json|subscriptions\.json|active-config|settings\.json|routing_policies\.json|device-routing\.json|vpn-domains\.txt|vpn-domains-udp\.txt|vpn-subnets\.txt|vpn-subnets-udp\.txt|direct-domains\.txt|direct-domains-udp\.txt|direct-subnets\.txt|direct-subnets-udp\.txt|vpnserver-credentials\.json|autostart-enabled|router-hwid|multi\.json|dns-pinned-domains\.txt)$'
+ALLOWED_ENTRY_RE='^(\./)?$|^(\./)?configs/?$|^(\./)?configs/[A-Za-z0-9_.@+-]+\.json$|^(\./)?(manifest\.json|subscriptions\.json|active-config|settings\.json|routing_policies\.json|device-routing\.json|vpn-domains\.txt|vpn-domains-udp\.txt|vpn-subnets\.txt|vpn-subnets-udp\.txt|direct-domains\.txt|direct-domains-udp\.txt|direct-subnets\.txt|direct-subnets-udp\.txt|vpnserver-credentials\.json|autostart-enabled|router-hwid|multi\.json|dns-pinned-domains\.txt|list-overrides\.json)$'
 CONFIG_ID_RE='^[A-Za-z0-9_.@+-]+$'
 
 app_version() {
@@ -245,6 +245,13 @@ do_restore() {
     elif [ -n "$active" ] && [ -f "$VPN_CONFIGS_DIR/$active.json" ]; then
         apply_singbox_outbound "$VPN_CONFIGS_DIR/$active.json" "vpn" >/dev/null 2>&1
     fi
+    # B44: the restored switches (entries off, own connections) — the list files first,
+    # then everything below reads them; the per-entry connections go into sing-box
+    [ -x "$VPN_MANAGER_HOME/scripts/list-overrides.sh" ] && {
+        "$VPN_MANAGER_HOME/scripts/list-overrides.sh" remote
+        "$VPN_MANAGER_HOME/scripts/list-overrides.sh" local
+    } >/dev/null 2>&1
+    apply_via_rules >/dev/null 2>&1
     # Segment policies and subnet lists
     "$SINGBOX_RULES_INIT" restart-rules >/dev/null 2>&1
     # Domain lists → dnsmasq (the Russia set first, so the one dnsmasq restart takes both)

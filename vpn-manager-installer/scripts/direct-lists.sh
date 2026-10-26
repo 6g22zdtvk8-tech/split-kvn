@@ -130,12 +130,18 @@ do_download() {
             curl -sf --max-time 30 -o "$tmp" "$src/direct_$f" 2>/dev/null
         # A missing file comes back as a 404 page: keep the previous copy then
         if [ -s "$tmp" ] && ! grep -qiE '<html|^404: Not Found' "$tmp"; then
-            mv "$tmp" "$R/$f"
+            # B44: the download is the original; the file everyone reads is it minus
+            # the entries switched off in the panel (list-overrides.sh remote)
+            mkdir -p "$R/orig"
+            mv "$tmp" "$R/orig/$f"
             got=$((got + 1))
         else
             rm -f "$tmp"
         fi
     done
+    [ -x "$H/scripts/list-overrides.sh" ] && "$H/scripts/list-overrides.sh" remote
+    # no list-overrides.sh (should not happen): the originals are used as they are
+    [ -x "$H/scripts/list-overrides.sh" ] || for f in $REMOTE_FILES; do [ -f "$R/orig/$f" ] && cp "$R/orig/$f" "$R/$f"; done
     log "download: $got of 4 direct_* files from $src (missing ones keep the previous copy)"
 }
 

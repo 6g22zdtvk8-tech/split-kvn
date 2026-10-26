@@ -63,6 +63,77 @@
             'subtab.subnetsTcpUdp': 'Subnets',
             'subtab.subnetsUdp': 'Subnets UDP',
             'subtab.dnsPinned': 'DNS via Google',
+            'subtab.listTable': "Table",
+            'lt.search': "Search: domain, subnet, group…",
+            'lt.all': "All",
+            'lt.domains': "Domains",
+            'lt.subnets': "Subnets",
+            'lt.cloud': "Cloud",
+            'lt.mine': "Mine",
+            'lt.offOnly': "Switched off",
+            'lt.byGroups': "By groups",
+            'lt.addPlaceholder': "example.com or 203.0.113.0/24",
+            'lt.protoAll': "TCP and UDP",
+            'lt.protoUdp': "UDP only",
+            'lt.add': "+ Add",
+            'lt.enable': "Switch on",
+            'lt.disable': "Switch off",
+            'lt.deleteOwn': "Delete own",
+            'lt.clearSel': "Clear selection",
+            'lt.reset': 'Reset to default',
+            'lt.changedOnly': 'Changed',
+            'lt.cloudInactive': "Automatic list updates are off: the cloud entries are shown, but the router does not use them.",
+            'lt.colEntry': "Domain / subnet",
+            'lt.colGroup': "Group",
+            'lt.colType': "Type",
+            'lt.colSource': "Source",
+            'lt.colOn': "On",
+            'lt.legend': "A switched-off entry acts as if it were not in the list. Shift+click selects a range, the box at a group selects the group, the box in the header — everything found.",
+            'lt.selected': "Selected: {n}",
+            'lt.applying': "Applying…",
+            'lt.applied': "Applied",
+            'lt.loading': "Loading…",
+            'lt.empty': "Nothing found",
+            'lt.domain': "domain",
+            'lt.subnet': "subnet",
+            'lt.udp': "UDP",
+            'lt.srcCloud': "cloud",
+            'lt.srcMine': "mine",
+            'lt.srcBoth': "cloud · mine",
+            'lt.noGroup': "Without a group",
+            'lt.ownGroup': "My entries",
+            'lt.entries': "{n} entries",
+            'lt.deleteConfirm': "Delete {n} own entr(y/ies)? Cloud entries are not deleted, only switched off.",
+            'lt.added': "Added: {v}",
+            'listtable.errors.invalid': "Not a domain or a subnet",
+            'listtable.errors.exists': "Already in your list",
+            'listtable.errors.empty': "Nothing selected",
+            'lt.noOwnSelected': "No own entries among the selected",
+            'lt.colVia': 'Connection',
+            'lt.viaGroupPrimary': 'As the group (main server)',
+            'lt.viaGroupFastest': 'As the group (fastest)',
+            'lt.viaGroupSingle': 'As the group (current server)',
+            'lt.viaPick': '— choose —',
+            'lt.viaGone': 'server removed — goes as the group',
+            'lt.viaNa': 'not for this list',
+            'lt.viaInGroup': 'Servers of the group',
+            'lt.viaGroups': 'Dedicated groups',
+            'lt.viaManage': '⚙ Dedicated groups…',
+            'lt.groupsTitle': 'Dedicated groups',
+            'lt.groupsDesc': 'Entries sent to a dedicated group go through the fastest of its servers; while none of them answers — the way of the shared group. While some entry uses the group, its servers leave the shared group, so it never switches to them (unless the shared group would be left with no server at all).',
+            'lt.groupsAdd': '+ New group',
+            'lt.groupName': 'Group name',
+            'lt.groupDelete': 'Delete',
+            'lt.groupOutside': 'Outside the shared group',
+            'lt.groupInside': 'Now in the shared group (will leave it)',
+            'lt.groupInMark': 'leaves the shared group',
+            'lt.groupsSaved': 'Groups saved',
+            'lt.groupsNeedName': 'Each group needs a name',
+            'lt.groupsNeedServer': 'Each group needs at least one server',
+            'lt.groupsDup': 'Two groups with the same name',
+            'listtable.errors.groupName': 'Group name: 1–32 characters, no quotes',
+            'lt.viaOthers': 'Outside the group — only for chosen domains',
+            'listtable.errors.server': 'No such server',
             'dnspin.desc': "Addresses of these sites are always asked from the DNS servers below, not from the provider. Helps when a provider's DNS says a working site does not exist. Routing (VPN or direct) does not change.",
             'dnspin.server1': 'DNS server 1',
             'dnspin.server2': 'DNS server 2',
@@ -1214,6 +1285,77 @@
             'subtab.subnetsTcpUdp': 'Подсети',
             'subtab.subnetsUdp': 'Подсети UDP',
             'subtab.dnsPinned': 'DNS через Google',
+            'subtab.listTable': "Таблица",
+            'lt.search': "Поиск: домен, подсеть, группа…",
+            'lt.all': "Все",
+            'lt.domains': "Домены",
+            'lt.subnets': "Подсети",
+            'lt.cloud': "Облако",
+            'lt.mine': "Мои",
+            'lt.offOnly': "Выключенные",
+            'lt.byGroups': "По группам",
+            'lt.addPlaceholder': "example.com или 203.0.113.0/24",
+            'lt.protoAll': "TCP и UDP",
+            'lt.protoUdp': "Только UDP",
+            'lt.add': "+ Добавить",
+            'lt.enable': "Включить",
+            'lt.disable': "Выключить",
+            'lt.deleteOwn': "Удалить мои",
+            'lt.clearSel': "Снять выделение",
+            'lt.reset': 'Сбросить к умолчанию',
+            'lt.changedOnly': 'Изменённые',
+            'lt.cloudInactive': "Автообновление списков выключено: облачные записи показаны, но роутер их не использует.",
+            'lt.colEntry': "Домен / подсеть",
+            'lt.colGroup': "Группа",
+            'lt.colType': "Тип",
+            'lt.colSource': "Источник",
+            'lt.colOn': "Вкл",
+            'lt.legend': "Выключенная запись работает так, как будто её нет в списке. Shift+клик — выделить диапазон, флажок у группы — всю группу, флажок в шапке — всё найденное.",
+            'lt.selected': "Выбрано: {n}",
+            'lt.applying': "Применяется…",
+            'lt.applied': "Применено",
+            'lt.loading': "Загрузка…",
+            'lt.empty': "Ничего не найдено",
+            'lt.domain': "домен",
+            'lt.subnet': "подсеть",
+            'lt.udp': "UDP",
+            'lt.srcCloud': "облако",
+            'lt.srcMine': "мой",
+            'lt.srcBoth': "облако · мой",
+            'lt.noGroup': "Без группы",
+            'lt.ownGroup': "Мои записи",
+            'lt.entries': "записей: {n}",
+            'lt.deleteConfirm': "Удалить свои записи ({n})? Облачные записи не удаляются, только выключаются.",
+            'lt.added': "Добавлено: {v}",
+            'listtable.errors.invalid': "Это не домен и не подсеть",
+            'listtable.errors.exists': "Уже есть в вашем списке",
+            'listtable.errors.empty': "Ничего не выбрано",
+            'lt.noOwnSelected': "Среди выбранных нет своих записей",
+            'lt.colVia': 'Подключение',
+            'lt.viaGroupPrimary': 'Как у группы (главный)',
+            'lt.viaGroupFastest': 'Как у группы (самый быстрый)',
+            'lt.viaGroupSingle': 'Как у группы (текущий сервер)',
+            'lt.viaPick': '— выбрать —',
+            'lt.viaGone': 'сервер удалён — идёт как у группы',
+            'lt.viaNa': 'не для этого списка',
+            'lt.viaInGroup': 'Серверы группы',
+            'lt.viaGroups': 'Выделенные группы',
+            'lt.viaManage': '⚙ Выделенные группы…',
+            'lt.groupsTitle': 'Выделенные группы',
+            'lt.groupsDesc': 'Записи, назначенные выделенной группе, идут через самый быстрый из её серверов; пока ни один не отвечает — как у общей группы. Пока группу использует хоть одна запись, её серверы выходят из общей группы, и та на них не переключается (кроме случая, когда в общей группе не осталось бы ни одного сервера).',
+            'lt.groupsAdd': '+ Новая группа',
+            'lt.groupName': 'Название группы',
+            'lt.groupDelete': 'Удалить',
+            'lt.groupOutside': 'Вне общей группы',
+            'lt.groupInside': 'Сейчас в общей группе (выйдут из неё)',
+            'lt.groupInMark': 'выйдет из общей группы',
+            'lt.groupsSaved': 'Группы сохранены',
+            'lt.groupsNeedName': 'У каждой группы должно быть название',
+            'lt.groupsNeedServer': 'В каждой группе нужен хотя бы один сервер',
+            'lt.groupsDup': 'Две группы с одинаковым названием',
+            'listtable.errors.groupName': 'Название группы: 1–32 знака, без кавычек',
+            'lt.viaOthers': 'Вне группы — только для отдельных доменов',
+            'listtable.errors.server': 'Нет такого сервера',
             'dnspin.desc': 'Адреса этих сайтов роутер всегда спрашивает у DNS-серверов ниже, а не у провайдера. Помогает, когда DNS провайдера отвечает, что работающего сайта нет. Маршрут (через VPN или напрямую) не меняется.',
             'dnspin.server1': 'DNS-сервер 1',
             'dnspin.server2': 'DNS-сервер 2',
@@ -2401,7 +2543,7 @@
         authenticated: false,
         firstLogin: false,
         currentTab: 'vpn',
-        currentDomainsSubtab: 'domains-tcpudp',
+        currentDomainsSubtab: 'list-table',
         currentSubnetsSubtab: 'subnets-tcpudp',
         configs: [],
         subscriptions: [],
@@ -5437,7 +5579,7 @@
         hideListOverlapWarnings();
 
         // The other tab reloads its lists when opened
-        if (state.currentTab === 'domains') { loadDomains(); loadSubnets(); }
+        if (state.currentTab === 'domains') { loadDomains(); loadSubnets(); if (state.currentDomainsSubtab === 'list-table') loadListTable(); }
         else if (state.currentTab === 'subnets') loadSubnets();
     }
 
@@ -5461,7 +5603,7 @@
         state.listSet = listBinding[state.listMode];
         updateListModeUI();
         // B25: domains and subnets share one tab
-        if (tab === 'domains') { loadDomains(); loadSubnets(); }
+        if (tab === 'domains') { loadDomains(); loadSubnets(); if (state.currentDomainsSubtab === 'list-table') loadListTable(); }
         else loadSubnets();
     }
 
@@ -5590,6 +5732,396 @@
         // DNS via Google is not a routing list: the mode rows above do not apply to it
         $('#list-mode-panel-domains')?.classList.toggle('dns-pinned-open', subtabName === 'dns-pinned');
         if (subtabName === 'dns-pinned') loadDnsPinned();
+        if (subtabName === 'list-table') loadListTable();
+    }
+
+    // ============================================
+    // B44: the lists as one table (listtable.cgi)
+    // ============================================
+    const lt = {
+        entries: [], set: null, loading: false,
+        kind: 'all', src: null, offOnly: false, changedOnly: false, grouped: true, query: '',
+        sort: { key: 'v', dir: 1 },
+        sel: new Set(), lastIdx: null, order: [], pollTimer: null,
+        via: {}, servers: [], groupMode: 'single', groups: {}
+    };
+    const ltKey = e => e.v + '|' + e.proto;
+
+    async function loadListTable(quiet) {
+        const set = state.listSet;
+        if (!quiet) { const b = $('#lt-body'); if (b && !lt.entries.length) b.innerHTML = `<tr><td colspan="7" class="lt-empty">${t('lt.loading')}</td></tr>`; }
+        try {
+            const data = await api('/listtable.cgi?set=' + encodeURIComponent(set));
+            if (set !== state.listSet || !data.success) return;
+            if (lt.set !== set) { lt.sel.clear(); lt.lastIdx = null; }
+            lt.set = set;
+            lt.entries = data.data.entries || [];
+            lt.via = data.data.via || {};
+            lt.groups = data.data.groups || {};
+            lt.servers = data.data.servers || [];
+            lt.groupMode = data.data.group_mode || 'single';
+            lt.entries.forEach(e => { e.via = lt.via[e.v] || ''; });
+            $('#lt-cloud-note')?.classList.toggle('hidden', data.data.cloud_active !== false);
+            ltStatus(data.data.applying ? t('lt.applying') : '');
+            if (data.data.applying) ltPoll();
+            renderListTable();
+        } catch (e) {
+            ltStatus(e.message, true);
+        }
+    }
+
+    function ltStatus(text, error) {
+        const el = $('#lt-status');
+        if (!el) return;
+        el.textContent = text || '';
+        el.classList.toggle('error', !!error);
+    }
+
+    // while the router applies, ask every 2 s; say "Applied" once
+    function ltPoll() {
+        clearTimeout(lt.pollTimer);
+        lt.pollTimer = setTimeout(async () => {
+            try {
+                const data = await api('/listtable.cgi?set=' + encodeURIComponent(state.listSet));
+                if (data.success && data.data.applying) { ltPoll(); return; }
+                ltStatus(t('lt.applied'));
+                setTimeout(() => { if ($('#lt-status')?.textContent === t('lt.applied')) ltStatus(''); }, 3000);
+            } catch (_) { ltPoll(); }
+        }, 2000);
+    }
+
+    function ltVisible() {
+        const q = lt.query.trim().toLowerCase();
+        let rows = lt.entries.filter(e =>
+            (lt.kind === 'all' || e.kind === lt.kind) &&
+            (!lt.src || e.src === lt.src || e.src === 'both') &&
+            (!lt.offOnly || !e.on) &&
+            (!lt.changedOnly || ltChanged(e)) &&
+            (!q || e.v.toLowerCase().includes(q) || (e.group || '').toLowerCase().includes(q)));
+        const { key, dir } = lt.sort;
+        const val = e => key === 'on' ? (e.on ? 1 : 0) : key === 'group' ? (e.group || '\uffff')
+            : key === 'via' ? (e.via ? ltServerName(e.via) : '') : String(e[key] || '');
+        rows.sort((a, b) => {
+            const x = val(a), y = val(b);
+            return (x < y ? -1 : x > y ? 1 : 0) * dir || (a.v < b.v ? -1 : a.v > b.v ? 1 : 0);
+        });
+        return rows;
+    }
+
+    // "Connection" applies to the VPN lists (World set); the Russia set goes direct
+    const ltViaAllowed = () => state.listSet !== 'russia';
+    // a server with the subscription it came from: "Латвия · LokiVPN"
+    const ltServerLabel = s => s.sub ? `${s.name} · ${s.sub}` : s.name;
+    function ltServerName(id) {
+        if (id && id.startsWith('g:')) return '◆ ' + id.slice(2);
+        const s = lt.servers.find(x => x.id === id);
+        return s ? ltServerLabel(s) : id;
+    }
+    const ltViaKnown = id => !id || (id.startsWith('g:') ? Object.prototype.hasOwnProperty.call(lt.groups, id.slice(2)) : lt.servers.some(x => x.id === id));
+    function ltGroupLabel() {
+        return lt.groupMode === 'multi:fastest' ? t('lt.viaGroupFastest')
+            : lt.groupMode.startsWith('multi') ? t('lt.viaGroupPrimary') : t('lt.viaGroupSingle');
+    }
+    function ltViaOptions(current, withPick) {
+        const opts = [];
+        if (withPick) opts.push(`<option value="__pick" selected disabled>${t('lt.viaPick')}</option>`);
+        opts.push(`<option value=""${!withPick && !current ? ' selected' : ''}>${escapeHtml(ltGroupLabel())}</option>`);
+        const opt = s => `<option value="${escapeHtml(s.id)}"${current === s.id ? ' selected' : ''}>${escapeHtml(ltServerLabel(s))}</option>`;
+        const inGroup = lt.servers.filter(s => s.in_group), rest = lt.servers.filter(s => !s.in_group);
+        const gnames = Object.keys(lt.groups).sort((a, b) => a.localeCompare(b));
+        if (gnames.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaGroups'))}">${gnames.map(n =>
+            `<option value="g:${escapeHtml(n)}"${current === 'g:' + n ? ' selected' : ''}>◆ ${escapeHtml(n)}</option>`).join('')}</optgroup>`);
+        if (inGroup.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaInGroup'))}">${inGroup.map(opt).join('')}</optgroup>`);
+        if (rest.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaOthers'))}">${rest.map(opt).join('')}</optgroup>`);
+        if (current && !ltViaKnown(current)) {
+            opts.push(`<option value="${escapeHtml(current)}" selected>${escapeHtml(t('lt.viaGone'))}</option>`);
+        }
+        opts.push(`<option value="__groups">${escapeHtml(t('lt.viaManage'))}</option>`);
+        return opts.join('');
+    }
+
+    // differs from the default: switched off or a connection of its own
+    const ltChanged = e => !e.on || !!e.via;
+
+    function ltGroupName(e) {
+        if (e.group) return e.group;
+        return e.src === 'mine' ? t('lt.ownGroup') : t('lt.noGroup');
+    }
+
+    function renderListTable() {
+        const body = $('#lt-body');
+        if (!body) return;
+        const rows = ltVisible();
+        const offN = lt.entries.filter(e => !e.on).length;
+        const oc = $('#lt-off-count'); if (oc) oc.textContent = offN ? '· ' + offN : '';
+        const chN = lt.entries.filter(ltChanged).length;
+        const cc = $('#lt-changed-count'); if (cc) cc.textContent = chN ? '· ' + chN : '';
+        $('#lt-chips [data-lt-changed]')?.classList.toggle('active', lt.changedOnly);
+        $$('#lt-chips [data-lt-kind]').forEach(b => b.classList.toggle('active', b.dataset.ltKind === lt.kind));
+        $$('#lt-chips [data-lt-src]').forEach(b => b.classList.toggle('active', b.dataset.ltSrc === lt.src));
+        $('#lt-chips [data-lt-off]')?.classList.toggle('active', lt.offOnly);
+        $('#lt-group-toggle')?.classList.toggle('active', lt.grouped);
+        $$('.lt-table th[data-lt-sort] .lt-arrow').forEach(a => {
+            const k = a.parentElement.dataset.ltSort;
+            a.textContent = lt.sort.key === k ? (lt.sort.dir > 0 ? '▲' : '▼') : '';
+        });
+        if (!rows.length) {
+            body.innerHTML = `<tr><td colspan="7" class="lt-empty">${t('lt.empty')}</td></tr>`;
+            ltBulkUI();
+            return;
+        }
+        const srcLabel = s => s === 'cloud' ? t('lt.srcCloud') : s === 'mine' ? t('lt.srcMine') : t('lt.srcBoth');
+        const rowHtml = (e, i) => {
+            const k = ltKey(e);
+            const sel = lt.sel.has(k);
+            return `<tr class="${sel ? 'lt-sel' : ''} ${e.on ? '' : 'lt-off'} ${ltChanged(e) ? 'lt-changed' : ''}" data-k="${escapeHtml(k)}" data-i="${i}">
+                <td><input type="checkbox" class="lt-cb" ${sel ? 'checked' : ''}></td>
+                <td class="lt-v">${escapeHtml(e.v)}</td>
+                <td>${escapeHtml(e.group || '—')}</td>
+                <td>${e.kind === 'subnet' ? t('lt.subnet') : t('lt.domain')}${e.proto === 'udp' ? ' · ' + t('lt.udp') : ''}</td>
+                <td><span class="lt-tag ${e.src}">${srcLabel(e.src)}</span></td>
+                <td><button type="button" class="lt-sw ${e.on ? 'on' : ''}" aria-pressed="${e.on}"></button></td>
+                <td class="lt-c-via">${!ltViaAllowed() ? `<span class="lt-na">${t('lt.viaNa')}</span>`
+                    : `<select class="lt-select lt-via" data-via="${escapeHtml(e.via)}" ${e.on ? '' : 'disabled'}><option selected>${escapeHtml(e.via ? (ltViaKnown(e.via) ? ltServerName(e.via) : t('lt.viaGone')) : ltGroupLabel())}</option></select>`}</td>
+            </tr>`;
+        };
+        // lt.order is the order on screen: Shift+click selects what the eye sees between
+        let html = '';
+        lt.order = [];
+        const put = e => { const i = lt.order.length; lt.order.push(ltKey(e)); return rowHtml(e, i); };
+        if (lt.grouped) {
+            const groups = new Map();
+            rows.forEach(e => {
+                const g = ltGroupName(e);
+                if (!groups.has(g)) groups.set(g, []);
+                groups.get(g).push(e);
+            });
+            // groups in name order; "without a group" and "my entries" at the end
+            const tail = new Set([t('lt.noGroup'), t('lt.ownGroup')]);
+            const names = [...groups.keys()].sort((a, b) => (tail.has(a) - tail.has(b)) || a.localeCompare(b));
+            for (const g of names) {
+                const items = groups.get(g);
+                const all = items.every(e => lt.sel.has(ltKey(e)));
+                html += `<tr class="lt-grp" data-g="${escapeHtml(g)}"><td><input type="checkbox" class="lt-gcb" ${all ? 'checked' : ''}></td>
+                    <td colspan="6">${escapeHtml(g)}<span class="lt-cnt">${t('lt.entries', { n: items.length })}</span></td></tr>`;
+                html += items.map(put).join('');
+            }
+        } else {
+            html = rows.map(put).join('');
+        }
+        body.innerHTML = html;
+        const all = $('#lt-sel-all');
+        if (all) all.checked = rows.length > 0 && rows.every(e => lt.sel.has(ltKey(e)));
+        ltBulkUI();
+    }
+
+    function ltBulkUI() {
+        const bar = $('#lt-bulk');
+        if (!bar) return;
+        const n = lt.sel.size;
+        bar.classList.toggle('hidden', n === 0);
+        const c = $('#lt-bulk-count'); if (c) c.textContent = t('lt.selected', { n });
+        const bv = $('#lt-bulk-via'), bw = $('#lt-bulk-via-wrap');
+        if (bw) bw.classList.toggle('hidden', !ltViaAllowed());
+        if (bv && n) bv.innerHTML = ltViaOptions('', true);
+    }
+
+    function ltSelected() {
+        return lt.entries.filter(e => lt.sel.has(ltKey(e)));
+    }
+
+    async function ltPost(action, body) {
+        const data = await api('/listtable.cgi/' + action, { method: 'POST', body: JSON.stringify({ set: state.listSet, ...body }) });
+        ltStatus(t('lt.applying'));
+        ltPoll();
+        return data;
+    }
+
+    function ltErr(e) {
+        const m = e.message || '';
+        ltStatus(m.startsWith('listtable.errors.') ? t(m) : m, true);
+    }
+
+    // B44 stage 3: dedicated groups of servers
+    function ltGroupItemHtml(name, members) {
+        const box = s => `<label><input type="checkbox" value="${escapeHtml(s.id)}" ${members.includes(s.id) ? 'checked' : ''}>
+            <span>${escapeHtml(ltServerLabel(s))}</span>${s.in_group ? `<span class="ltg-in">· ${t('lt.groupInMark')}</span>` : ''}</label>`;
+        const outside = lt.servers.filter(s => !s.in_group), inside = lt.servers.filter(s => s.in_group);
+        return `<div class="ltg-item">
+            <div class="ltg-head"><input type="text" class="ltg-name" maxlength="32" placeholder="${escapeHtml(t('lt.groupName'))}" value="${escapeHtml(name)}">
+                <button type="button" class="btn btn-sm btn-secondary ltg-del">${t('lt.groupDelete')}</button></div>
+            <div class="ltg-servers">
+                ${outside.length ? `<div class="ltg-sub">${t('lt.groupOutside')}</div>${outside.map(box).join('')}` : ''}
+                ${inside.length ? `<div class="ltg-sub">${t('lt.groupInside')}</div>${inside.map(box).join('')}` : ''}
+            </div></div>`;
+    }
+
+    function ltOpenGroups() {
+        const list = $('#lt-groups-list');
+        if (!list) return;
+        const names = Object.keys(lt.groups).sort((a, b) => a.localeCompare(b));
+        list.innerHTML = names.map(n => ltGroupItemHtml(n, lt.groups[n] || [])).join('') || ltGroupItemHtml('', []);
+        const msg = $('#lt-groups-msg'); if (msg) { msg.textContent = ''; msg.className = 'validation-message'; }
+        showModal($('#lt-groups-modal'));
+    }
+
+    async function ltSaveGroups() {
+        const msg = $('#lt-groups-msg');
+        const say = (text, ok) => { if (msg) { msg.textContent = text; msg.className = 'validation-message ' + (ok ? 'success' : 'error'); } };
+        const groups = {};
+        for (const item of $$('#lt-groups-list .ltg-item')) {
+            const name = item.querySelector('.ltg-name').value.trim();
+            const members = [...item.querySelectorAll('.ltg-servers input:checked')].map(i => i.value);
+            if (!name && !members.length) continue;
+            if (!name) return say(t('lt.groupsNeedName'));
+            if (!members.length) return say(t('lt.groupsNeedServer'));
+            if (groups[name]) return say(t('lt.groupsDup'));
+            groups[name] = members;
+        }
+        try {
+            const data = await api('/listtable.cgi/groups', { method: 'POST', body: JSON.stringify({ groups }) });
+            lt.groups = data.data?.groups || groups;
+            say(t('lt.groupsSaved'), true);
+            hideModal($('#lt-groups-modal'));
+            ltStatus(t('lt.applying')); ltPoll();
+            loadListTable(true);
+        } catch (e) {
+            const m = e.message || '';
+            say(m.startsWith('listtable.errors.') ? t(m) : m);
+        }
+    }
+
+    async function ltSetVia(entries, server) {
+        const values = [...new Set(entries.map(e => e.v))];
+        if (!values.length) return;
+        entries.forEach(e => { e.via = server; lt.via[e.v] = server; });
+        renderListTable();
+        try { await ltPost('via', { values, server }); } catch (e) { ltErr(e); loadListTable(true); }
+    }
+
+    async function ltSwitch(entries, on) {
+        const values = [...new Set(entries.map(e => e.v))];
+        if (!values.length) return;
+        entries.forEach(e => { e.on = on; });
+        renderListTable();
+        try { await ltPost('set', { values, on }); } catch (e) { ltErr(e); loadListTable(true); }
+    }
+
+    function initListTable() {
+        const body = $('#lt-body');
+        if (!body || body.dataset.ready) return;
+        body.dataset.ready = '1';
+        $('#lt-search')?.addEventListener('input', e => { lt.query = e.target.value; renderListTable(); });
+        $$('#lt-chips [data-lt-kind]').forEach(b => b.addEventListener('click', () => { lt.kind = b.dataset.ltKind; renderListTable(); }));
+        $$('#lt-chips [data-lt-src]').forEach(b => b.addEventListener('click', () => { lt.src = lt.src === b.dataset.ltSrc ? null : b.dataset.ltSrc; renderListTable(); }));
+        $('#lt-chips [data-lt-off]')?.addEventListener('click', () => { lt.offOnly = !lt.offOnly; renderListTable(); });
+        $('#lt-chips [data-lt-changed]')?.addEventListener('click', () => { lt.changedOnly = !lt.changedOnly; renderListTable(); });
+        $('#lt-group-toggle')?.addEventListener('click', () => { lt.grouped = !lt.grouped; renderListTable(); });
+        $$('.lt-table th[data-lt-sort]').forEach(th => th.addEventListener('click', () => {
+            const k = th.dataset.ltSort;
+            lt.sort = { key: k, dir: lt.sort.key === k ? -lt.sort.dir : 1 };
+            renderListTable();
+        }));
+        $('#lt-sel-all')?.addEventListener('change', e => {
+            const rows = ltVisible();
+            rows.forEach(r => e.target.checked ? lt.sel.add(ltKey(r)) : lt.sel.delete(ltKey(r)));
+            renderListTable();
+        });
+        body.addEventListener('click', e => {
+            const tr = e.target.closest('tr');
+            if (!tr) return;
+            if (tr.classList.contains('lt-grp')) {
+                if (!e.target.classList.contains('lt-gcb')) return;
+                const g = tr.dataset.g;
+                const items = ltVisible().filter(r => ltGroupName(r) === g);
+                items.forEach(r => e.target.checked ? lt.sel.add(ltKey(r)) : lt.sel.delete(ltKey(r)));
+                renderListTable();
+                return;
+            }
+            const k = tr.dataset.k;
+            const entry = lt.entries.find(x => ltKey(x) === k);
+            if (!entry) return;
+            if (e.target.classList.contains('lt-sw')) { ltSwitch([entry], !entry.on); return; }
+            if (e.target.classList.contains('lt-via')) return;
+            if (!e.target.classList.contains('lt-cb')) return;
+            const idx = parseInt(tr.dataset.i, 10);
+            const on = e.target.checked;
+            if (e.shiftKey && lt.lastIdx !== null) {
+                const [a, b] = [Math.min(lt.lastIdx, idx), Math.max(lt.lastIdx, idx)];
+                for (let i = a; i <= b; i++) on ? lt.sel.add(lt.order[i]) : lt.sel.delete(lt.order[i]);
+            } else {
+                on ? lt.sel.add(k) : lt.sel.delete(k);
+            }
+            lt.lastIdx = idx;
+            renderListTable();
+        });
+        // the full server list is put into a row's select only when it is opened:
+        // hundreds of rows × dozens of servers would make the table slow on a phone
+        const fillVia = el => {
+            if (!el.classList?.contains('lt-via') || el.dataset.full) return;
+            el.innerHTML = ltViaOptions(el.dataset.via || '');
+            el.dataset.full = '1';
+        };
+        body.addEventListener('focusin', e => fillVia(e.target));
+        body.addEventListener('mousedown', e => fillVia(e.target));
+        body.addEventListener('touchstart', e => fillVia(e.target), { passive: true });
+        body.addEventListener('change', e => {
+            if (!e.target.classList.contains('lt-via')) return;
+            const tr = e.target.closest('tr');
+            const entry = lt.entries.find(x => ltKey(x) === tr?.dataset.k);
+            if (e.target.value === '__groups') { e.target.value = entry?.via || ''; ltOpenGroups(); return; }
+            if (entry) ltSetVia([entry], e.target.value);
+        });
+        $('#lt-bulk-via')?.addEventListener('change', e => {
+            if (e.target.value === '__pick') return;
+            if (e.target.value === '__groups') { e.target.value = '__pick'; ltOpenGroups(); return; }
+            ltSetVia(ltSelected(), e.target.value);
+        });
+        $('#lt-groups-add')?.addEventListener('click', () => {
+            const list = $('#lt-groups-list');
+            list.insertAdjacentHTML('beforeend', ltGroupItemHtml('', []));
+        });
+        $('#lt-groups-list')?.addEventListener('click', e => {
+            if (e.target.classList.contains('ltg-del')) e.target.closest('.ltg-item')?.remove();
+        });
+        $('#lt-groups-save')?.addEventListener('click', ltSaveGroups);
+        $$('#lt-bulk [data-lt-bulk]').forEach(b => b.addEventListener('click', async () => {
+            const what = b.dataset.ltBulk;
+            if (what === 'clear') { lt.sel.clear(); renderListTable(); return; }
+            const sel = ltSelected();
+            if (what === 'on' || what === 'off') { await ltSwitch(sel, what === 'on'); return; }
+            if (what === 'reset') {
+                // back to the default: switched on, the group's way
+                const off = sel.filter(e => !e.on), own = ltViaAllowed() ? sel.filter(e => e.via) : [];
+                if (off.length) await ltSwitch(off, true);
+                if (own.length) await ltSetVia(own, '');
+                return;
+            }
+            if (what === 'delete') {
+                const own = sel.filter(e => e.src !== 'cloud');
+                if (!own.length) { ltStatus(t('lt.noOwnSelected'), true); return; }
+                if (!confirm(t('lt.deleteConfirm', { n: own.length }))) return;
+                try {
+                    await ltPost('delete', { values: [...new Set(own.map(e => e.v))] });
+                    own.forEach(e => lt.sel.delete(ltKey(e)));
+                    setTimeout(() => loadListTable(true), 800);
+                } catch (e) { ltErr(e); }
+            }
+        }));
+        const add = async () => {
+            const input = $('#lt-add-value');
+            const raw = (input?.value || '').trim();
+            if (!raw) return;
+            const kind = /^[0-9.]+(\/\d+)?$|^[0-9a-f:]+(\/\d+)?$/i.test(raw) && /[\d:]/.test(raw[0]) ? 'subnet' : 'domain';
+            try {
+                await ltPost('add', { value: raw, kind, proto: $('#lt-add-proto')?.value || 'tcpudp' });
+                input.value = '';
+                ltStatus(t('lt.added', { v: raw }));
+                setTimeout(() => loadListTable(true), 800);
+            } catch (e) { ltErr(e); }
+        };
+        $('#lt-add-btn')?.addEventListener('click', add);
+        $('#lt-add-value')?.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
     }
 
     // Domains with their own DNS servers (dnspin.cgi)
@@ -7576,6 +8108,7 @@
         
         // Save buttons for domains
         $('#dnspin-save-btn')?.addEventListener('click', saveDnsPinned);
+        initListTable();
         if (elements.domainsSaveTcpUdpBtn) {
             elements.domainsSaveTcpUdpBtn.addEventListener('click', () => saveDomains('tcpudp'));
         }
