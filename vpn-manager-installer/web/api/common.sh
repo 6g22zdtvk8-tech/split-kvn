@@ -522,10 +522,11 @@ list_configs() {
 # goes through the fastest server by the last check; on a failure the next ones in turn.
 # Everything else (lists, device policies, DNS, the VPN server) keeps pointing at "vpn".
 MULTI_FILE="$VPN_MANAGER_HOME/multi.json"
-# How many servers the group runs: 32, or settings.json "multi_limit" (8–128; set by the
-# owner's hidden menu on the counter). Every server costs router memory
-MULTI_LIMIT=$(jq -r '(.multi_limit // 32) | if type == "number" then (if . < 8 then 8 elif . > 128 then 128 else floor end) else 32 end' "$SETTINGS_FILE" 2>/dev/null)
-case "$MULTI_LIMIT" in ''|*[!0-9]*) MULTI_LIMIT=32 ;; esac
+# How many servers the group runs: 64 (32 until 3.1.11 — the owner: a group of servers per
+# service soon needs more), or settings.json "multi_limit" (8–128; set by the hidden menu
+# on the counter). Every server costs router memory and a check every minute
+MULTI_LIMIT=$(jq -r '(.multi_limit // 64) | if type == "number" then (if . < 8 then 8 elif . > 128 then 128 else floor end) else 64 end' "$SETTINGS_FILE" 2>/dev/null)
+case "$MULTI_LIMIT" in ''|*[!0-9]*) MULTI_LIMIT=64 ;; esac
 CLASH_API="http://127.0.0.1:9090"
 
 multi_state() {
@@ -896,8 +897,11 @@ multi_status_json() {
     [ -s "$SERVER_NOTICES" ] && jq -e 'type == "array"' "$SERVER_NOTICES" >/dev/null 2>&1 && notices=$(jq -c '.[-5:]' "$SERVER_NOTICES")
     local checks='{}'
     [ -s "$MULTI_CHECKS" ] && jq -e 'type == "object"' "$MULTI_CHECKS" >/dev/null 2>&1 && checks=$(cat "$MULTI_CHECKS")
+    local dserv='{}'
+    dserv=$(domain_servers_json); [ -n "$dserv" ] || dserv='{}'
     multi_catalog | jq -c --argjson st "$state" --argjson eff "$eff" --argjson px "$proxies" --argjson notices "$notices" \
-        --argjson limit "$MULTI_LIMIT" --argjson running "$running" --argjson chk "$checks" --argjson now "$(date +%s)" '
+        --argjson limit "$MULTI_LIMIT" --argjson running "$running" --argjson chk "$checks" --argjson now "$(date +%s)" \
+        --argjson dserv "$dserv" '
         (map({key: .id, value: .}) | from_entries) as $cat
         | $px.proxies as $p
         | ($p["vpn-main"].now // ("m-" + $st.primary)) as $main
@@ -935,6 +939,8 @@ multi_status_json() {
                          elif $d == null then "unknown" else "reserve" end),
                 main: ($t == $main and ($fastest | not)),
                 carrying: ($st.mode == "multi" and $t == $carrier)}],
+           # which domains of the table go through each server (owner, 27.10: shown in the list)
+           domain_servers: $dserv,
            # servers "only for chosen domains" (x-<id>): their last check, for the panel
            reserved_checks: ([$p | to_entries[] | select(.key | startswith("x-"))
                | {key: (.key | ltrimstr("x-")), value: (((.value.history // []) | if length > 0 then .[-1].delay else null end) as $d
@@ -2560,6 +2566,20 @@ update_dnsmasq_domains() {
 # and the device policies except Direct. Rebuilt from scratch on every call, removed
 # completely when nothing is chosen.
 LIST_OVERRIDES="$VPN_MANAGER_HOME/list-overrides.json"
+
+# Config id → the entries of the table that go through it: one server, several ("a,b") or a
+# named group of 3.1.0–3.1.2; switched-off entries left out. {"<id>": ["youtube.com", …]}
+domain_servers_json() {
+    [ -s "$LIST_OVERRIDES" ] || { echo '{}'; return; }
+    jq -c '([(.off // [])[] | strings | ltrimstr("*.") | ltrimstr("*")]) as $off
+        | (.groups // {}) as $g
+        | [(.via // {}) | to_entries[] | select(.value | type == "string" and . != "")
+           | select(.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not)
+           | .key as $e
+           | (if (.value | startswith("g:")) then ($g[.value | ltrimstr("g:")] // []) else (.value | split(",")) end)[]
+           | {id: ., e: $e}]
+        | group_by(.id) | map({key: .[0].id, value: (map(.e) | unique)}) | from_entries' "$LIST_OVERRIDES" 2>/dev/null || echo '{}'
+}
 
 # Servers kept out of the shared group (JSON array of config ids): the ones whose role is
 # "only for chosen domains" ("reserved", set on the servers tab), and the servers of the

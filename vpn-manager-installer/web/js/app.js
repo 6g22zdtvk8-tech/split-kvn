@@ -128,6 +128,7 @@
             'lt.multiTitle': 'Several servers',
             'lt.multiDesc': 'The entry goes through the fastest of the ticked servers; while none of them answers — automatically.',
             'lt.multiNeed': 'Tick at least one server',
+            'lt.multiFor': 'Applies to {n} entr(y/ies)',
             'role.auto': 'automatic ⇄',
             'role.reserved': 'only for chosen domains ⇄',
             'role.title': 'Role of the server: automatic — takes part in automatic switching; only for chosen domains — never switched to automatically, only domains you send to it use it. Click to change.',
@@ -135,6 +136,11 @@
             'role.setAuto': 'The server takes part in automatic switching again. sing-box restarts: the internet blinks for a couple of seconds',
             'role.sep': 'Only for chosen domains',
             'role.badge': 'Chosen domains',
+            'role.domainsN': '{n} domains',
+            'role.domainsTitle': 'Goes through this server:',
+            'role.unassign': 'Stop using this server for its domains',
+            'role.unassignConfirm': 'Stop sending {n} domain(s) through this server?\n\n{list}\n\nThey go through their other chosen servers or automatically.',
+            'role.unassigned': '{n} domain(s) no longer use this server',
             'role.autoShort': 'Automatic',
             'role.reservedShort': 'Only for chosen domains',
             'role.mainFirst': 'This is the main server: first make another server main',
@@ -1375,6 +1381,7 @@
             'lt.multiTitle': 'Несколько серверов',
             'lt.multiDesc': 'Запись идёт через самый быстрый из отмеченных серверов; пока ни один не отвечает — автоматически.',
             'lt.multiNeed': 'Отметьте хотя бы один сервер',
+            'lt.multiFor': 'Применится к записям: {n}',
             'role.auto': 'автоматически ⇄',
             'role.reserved': 'только для выбранных доменов ⇄',
             'role.title': 'Роль сервера: «автоматически» — участвует в автопереключении; «только для выбранных доменов» — автоматически на него не переключается, через него идут только домены, которые вы на него направили. Нажмите, чтобы сменить.',
@@ -1382,6 +1389,11 @@
             'role.setAuto': 'Сервер снова участвует в автопереключении. sing-box перезапускается — интернет моргнёт на пару секунд',
             'role.sep': 'Только для выбранных доменов',
             'role.badge': 'Для доменов',
+            'role.domainsN': 'доменов: {n}',
+            'role.domainsTitle': 'Через этот сервер идут:',
+            'role.unassign': 'Не использовать сервер для его доменов',
+            'role.unassignConfirm': 'Убрать этот сервер у доменов ({n})?\n\n{list}\n\nОни пойдут через другие выбранные для них серверы или автоматически.',
+            'role.unassigned': 'Доменов, отвязанных от сервера: {n}',
             'role.autoShort': 'Автоматически',
             'role.reservedShort': 'Только для выбранных доменов',
             'role.mainFirst': 'Это главный сервер: сначала сделайте главным другой',
@@ -4040,7 +4052,7 @@
     const multiState = {
         available: false,   // multi.cgi answered at least once
         mode: 'single',
-        limit: 32,
+        limit: 64,
         primary: '',
         members: [],
         subscriptions: [],
@@ -4284,13 +4296,14 @@
         if (!data) return;
         multiState.available = true;
         multiState.mode = data.mode === 'multi' ? 'multi' : 'single';
-        multiState.limit = parseInt(data.limit, 10) || 32;
+        multiState.limit = parseInt(data.limit, 10) || 64;
         multiState.primary = data.primary ? String(data.primary) : '';
         multiState.strategy = data.strategy === 'fastest' ? 'fastest' : 'primary';
         multiState.members = Array.isArray(data.members) ? data.members.map(String) : [];
         multiState.subscriptions = Array.isArray(data.subscriptions) ? data.subscriptions.map(String) : [];
         multiState.effective = Array.isArray(data.effective) ? data.effective : [];
         multiState.reservedChecks = data.reserved_checks || {};
+        multiState.domainServers = data.domain_servers || {};
         multiState.truncated = parseInt(data.truncated, 10) || 0;
         multiState.running = !!data.running;
         multiState.lastCheck = data.last_check || null;
@@ -4302,6 +4315,45 @@
         if (state.configs.length > 0) renderConfigs();
     }
     
+    // Which domains of the table go through a server: a small list under the chip
+    function multiDomainsPopover(e, id) {
+        e.stopPropagation();
+        document.getElementById('multi-domains-pop')?.remove();
+        const d = (multiState.domainServers || {})[id] || [];
+        const r = e.currentTarget.getBoundingClientRect();
+        const m = document.createElement('div');
+        m.id = 'multi-domains-pop';
+        m.className = 'multi-limit-menu multi-domains-pop';
+        m.style.top = (window.scrollY + r.bottom + 4) + 'px';
+        m.style.left = (window.scrollX + Math.max(8, r.left)) + 'px';
+        m.innerHTML = `<div class="mdp-title">${escapeHtml(t('role.domainsTitle'))}</div>` + d.map(x => `<div class="mdp-item">${escapeHtml(x)}</div>`).join('');
+        document.body.appendChild(m);
+        setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+    }
+
+    // A server chosen only for domains, removed from the list: the domains stop using it
+    // (the rest of a "several servers" choice stays; none left — back to automatic)
+    async function multiUnassign(id) {
+        const d = (multiState.domainServers || {})[id] || [];
+        if (!d.length) return;
+        if (!confirm(t('role.unassignConfirm', { n: d.length, list: d.slice(0, 15).join(', ') + (d.length > 15 ? '…' : '') }))) return;
+        try {
+            const r = await api('/listtable.cgi?set=world');
+            const via = r.data?.via || {};
+            const byNew = {};
+            d.forEach(v => {
+                const cur = via[v] || '';
+                const next = cur.startsWith('g:') ? '' : cur.split(',').filter(x => x && x !== id).join(',');
+                (byNew[next] = byNew[next] || []).push(v);
+            });
+            for (const [server, values] of Object.entries(byNew)) {
+                await api('/listtable.cgi/via', { method: 'POST', body: JSON.stringify({ set: 'world', values, server }) });
+            }
+            showToast(t('role.unassigned', { n: d.length }), 'success', 5000);
+            setTimeout(loadMultiState, 5000);
+        } catch (err) { showToast(err.message || 'Error', 'error'); }
+    }
+
     // Hidden on purpose (owner, 26.10): a click on the "N of 32" counter opens a plain menu
     // to raise the server limit. Nothing hints at it — only those who know will find it
     function multiLimitMenu(e) {
@@ -4572,6 +4624,9 @@
             ? `<button class="btn btn-sm btn-icon" data-multi-undo="${escapeHtml(id)}" title="${escapeHtml(t('multi.undoRemove'))}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                </button>`
+            : row.domainOnly ? `<button class="btn btn-sm btn-icon multi-remove" data-multi-unassign="${escapeHtml(id)}" title="${escapeHtml(t('role.unassign'))}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+               </button>`
             : `<button class="btn btn-sm btn-icon multi-remove" data-multi-remove="${escapeHtml(id)}" title="${escapeHtml(t('multi.remove'))}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                </button>`;
@@ -4592,7 +4647,10 @@
         }
         // the server's role, one choice: main / reserve / only for chosen domains
         // ("fastest" has no main: automatic / only for chosen domains)
-        if (!pendingAdd && !pendingRemove) {
+        if (row.domainOnly) {
+            // chosen for domains in the table, not ticked for the group: no role to pick
+            badge = `<span class="multi-badge reserved-role">${t('role.badge')}</span>`;
+        } else if (!pendingAdd && !pendingRemove) {
             const cur = row.reserved ? 'domains' : isPrimary ? 'main' : 'reserve';
             const o = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
             badge = `<select class="lt-select multi-role-select ${cur}" data-multi-role="${escapeHtml(id)}" title="${escapeHtml(t('role.title'))}">
@@ -4603,7 +4661,8 @@
             <div class="multi-row ${isPrimary ? 'is-main' : ''} ${row.carrying && live ? 'carrying' : ''} ${pendingAdd ? 'pending-add' : ''} ${pendingRemove ? 'pending-remove' : ''}">
                 <span class="multi-dot ${health}"></span>
                 <div class="multi-row-main">
-                    <div class="multi-row-name">${escapeHtml(row.name || id)}</div>
+                    <div class="multi-row-name">${escapeHtml(row.name || id)}${(() => { const d = (multiState.domainServers || {})[id] || [];
+                        return d.length ? ` <button type="button" class="multi-domains" data-multi-domains="${escapeHtml(id)}" title="${escapeHtml(d.slice(0, 20).join(', '))}">🎯 ${t('role.domainsN', { n: d.length })}</button>` : ''; })()}</div>
                     <div class="multi-row-sub">
                         ${protocol ? `<span class="config-protocol">${escapeHtml(protocol)}</span>` : ''}${sub ? escapeHtml(sub.name) : ''}
                         ${row.missing_since ? `<span class="multi-missing" title="${escapeHtml(t('notices.missingTitle'))}">${t('notices.missing', { time: new Date(row.missing_since * 1000).toLocaleString(currentLanguage === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) })}</span>` : ''}
@@ -4700,14 +4759,19 @@
             const head = r => multiState.strategy === 'fastest' ? !!r.carrying : String(r.id) === mainId;
             const ordered = [...rows].sort((a, b) => head(b) - head(a));
             // servers "only for chosen domains" are out of the switching: last, under a divider
-            const reservedRows = state.configs.filter(c => isReserved(c.id) && !multiEffectiveById(c.id))
+            // plus servers chosen for domains in the table that the group does not run (owner, 27.10)
+            const dserv = multiState.domainServers || {};
+            const reservedRows = state.configs.filter(c => (isReserved(c.id) || dserv[String(c.id)]) && !multiEffectiveById(c.id))
                 .map(c => { const rc = (multiState.reservedChecks || {})[String(c.id)] || {};
                     return { id: c.id, name: c.name, protocol: c.protocol, subscription_id: c.subscription_id || '', status: rc.check_error ? 'down' : 'unknown',
-                             delay: rc.delay ?? null, check_error: rc.check_error || null, carrying: false, reserved: true }; });
+                             delay: rc.delay ?? null, check_error: rc.check_error || null, carrying: false, reserved: isReserved(c.id),
+                             domainOnly: !isReserved(c.id) }; });
             list.innerHTML = (ordered.length
                 ? ordered.map(renderMultiRow).join('')
                 : `<div class="multi-empty">${t('multi.empty')}</div>`)
                 + (reservedRows.length ? `<div class="config-role-sep">${t('role.sep')}</div>` + reservedRows.map(renderMultiRow).join('') : '');
+            list.querySelectorAll('[data-multi-domains]').forEach(b => b.addEventListener('click', e => multiDomainsPopover(e, b.dataset.multiDomains)));
+            list.querySelectorAll('[data-multi-unassign]').forEach(b => b.addEventListener('click', () => multiUnassign(b.dataset.multiUnassign)));
             list.querySelectorAll('select[data-multi-role]').forEach(sel => sel.addEventListener('change', () => {
                 const id = sel.dataset.multiRole, v = sel.value;
                 const wasMain = String((multiState.draft || multiState).primary) === String(id) && multiState.strategy !== 'fastest';
@@ -6002,19 +6066,24 @@
     let ltMultiTarget = null;
     function ltOpenMulti(entries, current) {
         ltMultiTarget = entries;
-        const have = new Set((current || '').includes(',') || (current && !current.startsWith('g:')) ? current.split(',') : []);
+        // ticked: what these entries go through now — only when they all go the same way
+        if (current === undefined) {
+            const ways = [...new Set(entries.map(e => e.via || ''))];
+            current = ways.length === 1 ? ways[0] : '';
+        }
+        const have = new Set(current && !current.startsWith('g:') ? current.split(',') : []);
         const box = s => `<label class="ltm-item"><input type="checkbox" value="${escapeHtml(s.id)}" ${have.has(s.id) ? 'checked' : ''}><span>${escapeHtml(ltServerLabel(s))}</span></label>`;
         const auto = lt.servers.filter(s => !s.reserved && s.in_group), rest = lt.servers.filter(s => !s.reserved && !s.in_group), resv = lt.servers.filter(s => s.reserved);
         const part = (title, list) => list.length ? `<div class="ltg-sub">${escapeHtml(title)}</div>${list.map(box).join('')}` : '';
         $('#lt-multi-list').innerHTML = part(t('lt.viaReserved'), resv) + part(t('lt.viaAuto'), auto) + part(t('lt.viaUnticked'), rest);
-        const msg = $('#lt-multi-msg'); if (msg) { msg.textContent = ''; msg.className = 'validation-message'; }
+        const msg = $('#lt-multi-msg'); if (msg) { msg.textContent = t('lt.multiFor', { n: entries.length }); msg.className = 'validation-message'; }
         showModal($('#lt-multi-modal'));
     }
     async function ltSaveMulti() {
         const ids = [...$$('#lt-multi-list input:checked')].map(i => i.value);
         if (!ids.length) { const m = $('#lt-multi-msg'); if (m) { m.textContent = t('lt.multiNeed'); m.className = 'validation-message error'; } return; }
         hideModal($('#lt-multi-modal'));
-        if (ltMultiTarget) await ltSetVia(ltMultiTarget, ids.sort().join(','));
+        if (ltMultiTarget) { await ltSetVia(ltMultiTarget, ids.sort().join(',')); if (ltMultiTarget.length > 1) ltClearSel(); }
         ltMultiTarget = null;
     }
 
@@ -6169,6 +6238,10 @@
         }
     }
 
+    // after a bulk action the selection goes: left in place (often out of view behind a
+    // search) it was silently taken into the next action too (owner, 27.10)
+    function ltClearSel() { lt.sel.clear(); lt.lastIdx = null; renderListTable(); }
+
     async function ltSetVia(entries, server) {
         const values = [...new Set(entries.map(e => e.v))];
         if (!values.length) return;
@@ -6252,8 +6325,8 @@
         });
         $('#lt-bulk-via')?.addEventListener('change', e => {
             if (e.target.value === '__pick') return;
-            if (e.target.value === '__multi') { e.target.value = '__pick'; ltOpenMulti(ltSelected(), ''); return; }
-            ltSetVia(ltSelected(), e.target.value);
+            if (e.target.value === '__multi') { e.target.value = '__pick'; ltOpenMulti(ltSelected()); return; }
+            ltSetVia(ltSelected(), e.target.value).then(ltClearSel);
         });
         $('#lt-groups-add')?.addEventListener('click', () => {
             const list = $('#lt-groups-list');
@@ -6268,12 +6341,13 @@
             const what = b.dataset.ltBulk;
             if (what === 'clear') { lt.sel.clear(); renderListTable(); return; }
             const sel = ltSelected();
-            if (what === 'on' || what === 'off') { await ltSwitch(sel, what === 'on'); return; }
+            if (what === 'on' || what === 'off') { await ltSwitch(sel, what === 'on'); ltClearSel(); return; }
             if (what === 'reset') {
                 // back to the default: switched on, the group's way
                 const off = sel.filter(e => !e.on), own = ltViaAllowed() ? sel.filter(e => e.via) : [];
                 if (off.length) await ltSwitch(off, true);
                 if (own.length) await ltSetVia(own, '');
+                ltClearSel();
                 return;
             }
             if (what === 'delete') {
