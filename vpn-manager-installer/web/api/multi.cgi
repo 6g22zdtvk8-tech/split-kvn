@@ -105,6 +105,24 @@ case "$REQUEST_METHOD" in
                 respond_state
                 ;;
 
+            limit)
+                # {"limit": N} — how many servers the group may run (8–128); not shown in the
+                # panel, the counter's hidden menu sets it
+                N=$(printf '%s' "$BODY" | jq -r '.limit // empty | if type == "number" then floor else empty end')
+                case "$N" in ''|*[!0-9]*) json_error "Invalid limit" 400; exit 0 ;; esac
+                [ "$N" -ge 8 ] && [ "$N" -le 128 ] || { json_error "multi.errors.limitRange" 400; exit 0; }
+                tmp="$SETTINGS_FILE.tmp.$$"
+                jq --argjson n "$N" '.multi_limit = $n' "$SETTINGS_FILE" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$SETTINGS_FILE" \
+                    || { rm -f "$tmp"; json_error "Cannot save" 500; exit 0; }
+                MULTI_LIMIT=$N
+                log_action "MULTI" "Server limit: $N"
+                # more room: the servers of ticked subscriptions that did not fit join now
+                if [ "$(printf '%s' "$STATE" | jq -r '.mode')" = "multi" ]; then
+                    ( apply_multi_config && singbox_config_ok && multi_restart_vpn ) </dev/null >/dev/null 2>&1 &
+                fi
+                respond_state
+                ;;
+
             strategy)
                 # B42: "primary" — the main server leads; "fastest" — the fastest server
                 # by sing-box's check every minute leads (needs a restart, 2–3 s)

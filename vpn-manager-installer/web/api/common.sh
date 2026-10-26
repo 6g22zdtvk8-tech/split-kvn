@@ -522,7 +522,10 @@ list_configs() {
 # goes through the fastest server by the last check; on a failure the next ones in turn.
 # Everything else (lists, device policies, DNS, the VPN server) keeps pointing at "vpn".
 MULTI_FILE="$VPN_MANAGER_HOME/multi.json"
-MULTI_LIMIT=32
+# How many servers the group runs: 32, or settings.json "multi_limit" (8–128; set by the
+# owner's hidden menu on the counter). Every server costs router memory
+MULTI_LIMIT=$(jq -r '(.multi_limit // 32) | if type == "number" then (if . < 8 then 8 elif . > 128 then 128 else floor end) else 32 end' "$SETTINGS_FILE" 2>/dev/null)
+case "$MULTI_LIMIT" in ''|*[!0-9]*) MULTI_LIMIT=32 ;; esac
 CLASH_API="http://127.0.0.1:9090"
 
 multi_state() {
@@ -902,7 +905,7 @@ multi_status_json() {
         # the fallback says which group carries new connections: vpn-main, or
         # vpn-auto while the main server sits out after a failure
         | ($st.strategy == "fastest") as $fastest
-        # (the fallback's "now" is only the last connection's way: one connection that a
+        # (the fallback "now" is only the way of the last connection: one connection that a
         # server refused would flip the panel to "moving traffic" — the main group carries
         # the home since a failure sets it aside for 1 s only)
         | (if $fastest then "vpn-auto" else "vpn-main" end) as $fb

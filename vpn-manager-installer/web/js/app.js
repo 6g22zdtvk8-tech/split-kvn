@@ -4302,6 +4302,36 @@
         if (state.configs.length > 0) renderConfigs();
     }
     
+    // Hidden on purpose (owner, 26.10): a click on the "N of 32" counter opens a plain menu
+    // to raise the server limit. Nothing hints at it — only those who know will find it
+    function multiLimitMenu(e) {
+        e.stopPropagation();
+        document.getElementById('multi-limit-menu')?.remove();
+        const r = e.currentTarget.getBoundingClientRect();
+        const m = document.createElement('div');
+        m.id = 'multi-limit-menu';
+        m.className = 'multi-limit-menu';
+        m.style.top = (window.scrollY + r.bottom + 4) + 'px';
+        m.style.left = (window.scrollX + r.left) + 'px';
+        m.innerHTML = [32, 48, 64, 72, 96, 128].map(n => `<button type="button" data-n="${n}"${n === multiState.limit ? ' class="on"' : ''}>${n}</button>`).join('')
+            + `<input type="number" min="8" max="128" placeholder="…" value="">`;
+        document.body.appendChild(m);
+        const set = async n => {
+            n = parseInt(n, 10);
+            if (!(n >= 8 && n <= 128)) return;
+            m.remove();
+            try {
+                const d = await api('/multi.cgi/limit', { method: 'POST', body: JSON.stringify({ limit: n }) });
+                if (d.success) { multiState.limit = n; renderMultiUI(); setTimeout(loadMultiState, 6000); }
+            } catch (err) { showToast(err.message || 'Error', 'error'); }
+        };
+        m.querySelectorAll('button').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); set(b.dataset.n); }));
+        const inp = m.querySelector('input');
+        inp.addEventListener('click', ev => ev.stopPropagation());
+        inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') set(inp.value); if (ev.key === 'Escape') m.remove(); });
+        setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+    }
+
     async function loadMultiState() {
         try {
             const res = await api('/multi.cgi');
@@ -4657,6 +4687,7 @@
         
         const count = draftIds ? draftIds.length : multiState.effective.length;
         const counter = $('#multi-counter');
+        if (counter && !counter.dataset.hidden) { counter.dataset.hidden = '1'; counter.addEventListener('click', multiLimitMenu); }
         if (counter) {
             counter.textContent = t('multi.counter', { n: count, limit: multiState.limit });
             counter.classList.toggle('full', count >= multiState.limit);

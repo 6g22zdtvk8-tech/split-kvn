@@ -5073,3 +5073,8 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 @media (max-width: 600px) {
     .multi-row .multi-role-select { width: 12.5rem; justify-self: end; }
 }
+/* the counter's hidden limit menu: no hint on the counter itself */
+.multi-limit-menu { position: absolute; z-index: 1000; display: flex; flex-wrap: wrap; gap: 0.25rem; max-width: 15rem; padding: 0.4rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); }
+.multi-limit-menu button { padding: 0.25rem 0.55rem; font-size: 0.8rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-family: inherit; }
+.multi-limit-menu button.on { border-color: var(--accent-primary); color: var(--accent-primary); }
+.multi-limit-menu input { width: 4.5rem; padding: 0.25rem 0.4rem; font-size: 0.8rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); }
