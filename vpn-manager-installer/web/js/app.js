@@ -72,7 +72,7 @@
             'lt.mine': "Mine",
             'lt.offOnly': "Switched off",
             'lt.byGroups': "By groups",
-            'lt.addPlaceholder': "example.com or 203.0.113.0/24",
+            'lt.addPlaceholder': "one or several: example.com site.org 203.0.113.0/24",
             'lt.protoAll': "TCP and UDP",
             'lt.protoUdp': "UDP only",
             'lt.add': "+ Add",
@@ -109,6 +109,8 @@
             'lt.entries': "{n} entries",
             'lt.deleteConfirm': "Delete {n} own entr(y/ies)? Cloud entries are not deleted, only switched off.",
             'lt.added': "Added: {v}",
+            'lt.addExists': 'already there: {v}',
+            'lt.addInvalid': 'not a domain or subnet: {v}',
             'listtable.errors.invalid': "Not a domain or a subnet",
             'listtable.errors.exists': "Already in your list",
             'listtable.errors.empty': "Nothing selected",
@@ -1298,7 +1300,7 @@
             'lt.mine': "Мои",
             'lt.offOnly': "Выключенные",
             'lt.byGroups': "По группам",
-            'lt.addPlaceholder': "example.com или 203.0.113.0/24",
+            'lt.addPlaceholder': "одна или несколько: example.com site.org 203.0.113.0/24",
             'lt.protoAll': "TCP и UDP",
             'lt.protoUdp': "Только UDP",
             'lt.add': "+ Добавить",
@@ -1335,6 +1337,8 @@
             'lt.entries': "записей: {n}",
             'lt.deleteConfirm': "Удалить свои записи ({n})? Облачные записи не удаляются, только выключаются.",
             'lt.added': "Добавлено: {v}",
+            'lt.addExists': 'уже были: {v}',
+            'lt.addInvalid': 'не домен и не подсеть: {v}',
             'listtable.errors.invalid': "Это не домен и не подсеть",
             'listtable.errors.exists': "Уже есть в вашем списке",
             'listtable.errors.empty': "Ничего не выбрано",
@@ -6116,16 +6120,23 @@
                 } catch (e) { ltErr(e); }
             }
         }));
+        // several entries at once: separated by spaces, commas or new lines
         const add = async () => {
             const input = $('#lt-add-value');
-            const raw = (input?.value || '').trim();
-            if (!raw) return;
-            const kind = /^[0-9.]+(\/\d+)?$|^[0-9a-f:]+(\/\d+)?$/i.test(raw) && /[\d:]/.test(raw[0]) ? 'subnet' : 'domain';
+            const values = (input?.value || '').split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
+            if (!values.length) return;
             try {
-                await ltPost('add', { value: raw, kind, proto: $('#lt-add-proto')?.value || 'tcpudp' });
-                addForm(false);
-                ltStatus(t('lt.added', { v: raw }));
-                setTimeout(() => loadListTable(true), 800);
+                const data = await ltPost('add', { values, proto: $('#lt-add-proto')?.value || 'tcpudp' });
+                const r = data.data || {};
+                const added = r.added || values, exists = r.exists || [], invalid = r.invalid || [];
+                const parts = [];
+                if (added.length) parts.push(t('lt.added', { v: added.length === 1 ? added[0] : added.length }));
+                if (exists.length) parts.push(t('lt.addExists', { v: exists.join(', ') }));
+                if (invalid.length) parts.push(t('lt.addInvalid', { v: invalid.join(', ') }));
+                // what could not be added stays in the field to fix
+                if (invalid.length) { input.value = invalid.join('\n'); } else { addForm(false); }
+                ltStatus(parts.join(' · '), invalid.length > 0 && !added.length);
+                if (added.length) setTimeout(() => loadListTable(true), 800);
             } catch (e) { ltErr(e); }
         };
         const addForm = (open) => {
@@ -6137,7 +6148,8 @@
         $('#lt-add-open')?.addEventListener('click', () => addForm(true));
         $('#lt-add-cancel')?.addEventListener('click', () => { addForm(false); ltStatus(''); });
         $('#lt-add-btn')?.addEventListener('click', add);
-        $('#lt-add-value')?.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+        // Enter adds, Shift+Enter starts a new line
+        $('#lt-add-value')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } });
     }
 
     // Domains with their own DNS servers (dnspin.cgi)

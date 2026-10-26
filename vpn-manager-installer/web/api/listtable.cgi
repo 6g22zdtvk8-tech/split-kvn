@@ -4,7 +4,7 @@
 #   GET  /api/listtable.cgi?set=world|russia   every entry of the set's lists:
 #        {v, kind: domain|subnet, proto: tcpudp|udp, src: cloud|mine, group, on}
 #   POST /api/listtable.cgi/set     {"set":"world","values":[..],"on":false}  switch on/off
-#   POST /api/listtable.cgi/add     {"set":"world","value":"x","kind":"domain","proto":"tcpudp"}
+#   POST /api/listtable.cgi/add     {"set":"world","values":["x","10.0.0.0/8"],"proto":"tcpudp"}
 #   POST /api/listtable.cgi/delete  {"set":"world","values":[..]}  own entries only
 # Switching never edits the cloud lists: list-overrides.sh keeps the change aside, so the
 # list files keep their format and an older Split-KVN still reads them (see that script).
@@ -179,25 +179,43 @@ case "$REQUEST_METHOD" in
                 json_success "{\"applying\":true}"
                 ;;
             add)
-                V=$(printf '%s' "$BODY" | jq -r '.value // ""' | tr -d ' \t\r' | sed 's/^\*\.//; s/^https\?:\/\///; s/\/.*$//' )
-                KIND=$(printf '%s' "$BODY" | jq -r '.kind // "domain"')
+                # {"values":[..]} (or one "value"); each is a domain or a subnet, told apart here.
+                # Answer: which were added, which were already there, which are neither
                 PROTO=$(printf '%s' "$BODY" | jq -r 'if .proto == "udp" then "udp" else "tcpudp" end')
-                # a subnet keeps its "/mask" (the path cut above is for pasted URLs)
-                [ "$KIND" = "subnet" ] && V=$(printf '%s' "$BODY" | jq -r '.value // ""' | tr -d ' \t\r')
-                valid_entry "$V" "$KIND" || { json_error "listtable.errors.invalid" 400; exit 0; }
-                F=$(local_file x "$(set_dirs "$SET")" "$KIND" "$PROTO")
+                RAWS=$(printf '%s' "$BODY" | jq -r '((.values // []) + [.value // empty]) | .[] | strings' | tr ',; \t\r' '\n\n\n\n\n' | grep -v '^$')
+                [ -n "$RAWS" ] || { json_error "listtable.errors.empty" 400; exit 0; }
+                ADDED=""; EXISTS=""; BAD=""
                 "$LO" lock
-                if grep -qxF "$V" "$F" 2>/dev/null || grep -qxF "#off: $V" "$F" 2>/dev/null; then
-                    "$LO" unlock
+                for R in $RAWS; do
+                    # a subnet keeps its "/mask"; a pasted URL loses the scheme and the path
+                    if valid_entry "$R" subnet; then
+                        V="$R"; KIND=subnet
+                    else
+                        V=$(printf '%s' "$R" | sed 's/^\*\.//; s/^https\?:\/\///; s/\/.*$//; s/:[0-9]*$//' | tr 'A-Z' 'a-z'); KIND=domain
+                        valid_entry "$V" domain || { BAD="$BAD $R"; continue; }
+                    fi
+                    F=$(local_file x "$(set_dirs "$SET")" "$KIND" "$PROTO")
+                    if grep -qxF "$V" "$F" 2>/dev/null || grep -qxF "#off: $V" "$F" 2>/dev/null; then
+                        EXISTS="$EXISTS $V"; continue
+                    fi
+                    [ -s "$F" ] && [ -n "$(tail -c1 "$F")" ] && echo >> "$F"
+                    echo "$V" >> "$F"
+                    ADDED="$ADDED $V"
+                done
+                "$LO" unlock
+                js() { printf '%s\n' $1 | grep -v '^$' | jq -R . | jq -cs .; }
+                if [ -n "$ADDED" ]; then
+                    # shellcheck disable=SC2086
+                    "$LO" set on $ADDED >/dev/null 2>&1
+                    log_action "LIST_TABLE" "Added $(printf '%s\n' $ADDED | grep -c .) entr(y/ies) ($PROTO, $SET)"
+                    apply_bg
+                fi
+                # one value that could not be added keeps the old error answer
+                if [ -z "$ADDED" ] && [ "$(printf '%s\n' $RAWS | grep -c .)" -eq 1 ]; then
+                    [ -n "$BAD" ] && { json_error "listtable.errors.invalid" 400; exit 0; }
                     json_error "listtable.errors.exists" 409; exit 0
                 fi
-                [ -s "$F" ] && [ -n "$(tail -c1 "$F")" ] && echo >> "$F"
-                echo "$V" >> "$F"
-                "$LO" unlock
-                "$LO" set on "$V" >/dev/null 2>&1
-                log_action "LIST_TABLE" "Added $KIND $V ($PROTO, $SET)"
-                apply_bg
-                json_success "{\"applying\":true}"
+                json_success "{\"applying\":$([ -n "$ADDED" ] && echo true || echo false),\"added\":$(js "$ADDED"),\"exists\":$(js "$EXISTS"),\"invalid\":$(js "$BAD")}"
                 ;;
             delete)
                 VALUES=$(printf '%s' "$BODY" | jq -r '.values[]? | strings' | tr -d ' \t\r' | grep -v '^$')

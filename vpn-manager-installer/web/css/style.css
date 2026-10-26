@@ -5010,6 +5010,7 @@ a.link:hover {
 .lt-chip.active { background: var(--accent-primary); border-color: transparent; color: #0b1a1d; }
 .lt-chip-sep { width: 1px; height: 1.25rem; background: var(--border-color); margin: 0 0.125rem; }
 .lt-add { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+#lt-add-value.lt-add-input { resize: vertical; min-height: 2.1rem; line-height: 1.3; }
 #lt-add-value.lt-add-input { width: auto; flex: 1 1 220px; padding: 0.4rem 0.7rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: inherit; }
 select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: inherit; font-size: 0.8125rem; }
 .lt-status { font-size: 0.8125rem; color: var(--text-secondary); }
