@@ -4687,10 +4687,12 @@
             <div class="multi-row ${isPrimary ? 'is-main' : ''} ${row.carrying && live ? 'carrying' : ''} ${pendingAdd ? 'pending-add' : ''} ${pendingRemove ? 'pending-remove' : ''}">
                 <span class="multi-dot ${health}"></span>
                 <div class="multi-row-main">
-                    <div class="multi-row-name">${escapeHtml(row.name || id)}${(() => { const d = (multiState.domainServers || {})[id] || [];
-                        return d.length ? ` <button type="button" class="multi-domains" data-multi-domains="${escapeHtml(id)}" title="${escapeHtml(d.slice(0, 20).join(', '))}">🎯 ${t('role.domainsN', { n: d.length })}</button>` : ''; })()}</div>
+                    <div class="multi-row-name">${escapeHtml(row.name || id)}</div>
                     <div class="multi-row-sub">
                         ${protocol ? `<span class="config-protocol">${escapeHtml(protocol)}</span>` : ''}${sub ? escapeHtml(sub.name) : ''}
+                        ${(() => { const d = (multiState.domainServers || {})[id] || [];
+                            // on the line under the name: next to a long name on a phone it was cut off
+                            return d.length ? `<button type="button" class="multi-domains" data-multi-domains="${escapeHtml(id)}" title="${escapeHtml(d.slice(0, 20).join(', '))}">🎯 ${t('role.domainsN', { n: d.length })}</button>` : ''; })()}
                         ${row.missing_since ? `<span class="multi-missing" title="${escapeHtml(t('notices.missingTitle'))}">${t('notices.missing', { time: new Date(row.missing_since * 1000).toLocaleString(currentLanguage === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) })}</span>` : ''}
                     </div>
                 </div>
