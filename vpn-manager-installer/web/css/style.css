@@ -5065,3 +5065,7 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 .config-role-sep { margin: 0.6rem 0 0.3rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color); font-size: 0.75rem; color: #f0b429; text-transform: uppercase; letter-spacing: 0.04em; }
 .ltm-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 55vh; overflow-y: auto; margin-bottom: 0.5rem; }
 .ltm-item { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0; cursor: pointer; }
+.multi-badge.reserved-role { color: #f0b429; border-color: rgba(240, 180, 41, 0.6); }
+.multi-role-select { width: 14rem; max-width: 100%; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
+.multi-role-select.main { border-color: var(--accent-primary); color: var(--accent-primary); }
+.multi-role-select.domains { border-color: rgba(240, 180, 41, 0.6); color: #f0b429; }

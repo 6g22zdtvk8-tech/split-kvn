@@ -128,12 +128,17 @@
             'lt.multiTitle': 'Several servers',
             'lt.multiDesc': 'The entry goes through the fastest of the ticked servers; while none of them answers — automatically.',
             'lt.multiNeed': 'Tick at least one server',
-            'role.auto': 'automatic',
-            'role.reserved': 'only for chosen domains',
+            'role.auto': 'automatic ⇄',
+            'role.reserved': 'only for chosen domains ⇄',
             'role.title': 'Role of the server: automatic — takes part in automatic switching; only for chosen domains — never switched to automatically, only domains you send to it use it. Click to change.',
             'role.setReserved': 'The server now serves only the domains you send to it',
             'role.setAuto': 'The server takes part in automatic switching again',
             'role.sep': 'Only for chosen domains',
+            'role.badge': 'Chosen domains',
+            'role.autoShort': 'Automatic',
+            'role.reservedShort': 'Only for chosen domains',
+            'role.mainFirst': 'This is the main server: first make another server main',
+            'role.mainLater': 'The server is back in the switching; in a few seconds it can be made main',
             'lt.viaGone': 'server removed — goes automatically',
             'lt.viaNa': 'not for this list',
             'lt.viaInGroup': 'Servers of the group',
@@ -370,7 +375,7 @@
             'multi.modeMultiWhat': 'several servers, switching on failure',
             'multi.switchedMulti': 'Several-connections mode is on',
             'multi.switchedSingle': 'One-connection mode is on',
-            'multi.tileTitle': 'Several connections',
+            'multi.tileTitle': 'Active connections',
             'multi.counter': '{n} of {limit}',
             'multi.counterTitle': 'Selected servers / limit',
             'multi.checkNow': 'Check now',
@@ -1370,12 +1375,17 @@
             'lt.multiTitle': 'Несколько серверов',
             'lt.multiDesc': 'Запись идёт через самый быстрый из отмеченных серверов; пока ни один не отвечает — автоматически.',
             'lt.multiNeed': 'Отметьте хотя бы один сервер',
-            'role.auto': 'автоматически',
-            'role.reserved': 'только для выбранных доменов',
+            'role.auto': 'автоматически ⇄',
+            'role.reserved': 'только для выбранных доменов ⇄',
             'role.title': 'Роль сервера: «автоматически» — участвует в автопереключении; «только для выбранных доменов» — автоматически на него не переключается, через него идут только домены, которые вы на него направили. Нажмите, чтобы сменить.',
             'role.setReserved': 'Сервер теперь только для выбранных доменов',
             'role.setAuto': 'Сервер снова участвует в автопереключении',
             'role.sep': 'Только для выбранных доменов',
+            'role.badge': 'Для доменов',
+            'role.autoShort': 'Автоматически',
+            'role.reservedShort': 'Только для выбранных доменов',
+            'role.mainFirst': 'Это главный сервер: сначала сделайте главным другой',
+            'role.mainLater': 'Сервер вернулся в автопереключение; через несколько секунд его можно сделать главным',
             'lt.viaGone': 'сервер удалён — идёт автоматически',
             'lt.viaNa': 'не для этого списка',
             'lt.viaInGroup': 'Серверы группы',
@@ -1612,7 +1622,7 @@
             'multi.modeMultiWhat': 'несколько серверов, замена при сбое',
             'multi.switchedMulti': 'Включён режим нескольких подключений',
             'multi.switchedSingle': 'Включён режим одного подключения',
-            'multi.tileTitle': 'Несколько подключений',
+            'multi.tileTitle': 'Активные соединения',
             'multi.counter': '{n} из {limit}',
             'multi.counterTitle': 'Выбрано серверов / лимит',
             'multi.checkNow': 'Проверить сейчас',
@@ -3256,6 +3266,7 @@
                 state.activeConfig = data.data.active;
                 await loadReservedIds();
                 renderConfigs();
+                if (multiOn()) renderMultiUI();
                 // The status card may have been drawn before the names were known
                 if (state.lastStatusData) updateStatusDisplay(state.lastStatusData);
             }
@@ -3283,6 +3294,7 @@
             const r = await api('/listtable.cgi/reserved', { method: 'POST', body: JSON.stringify({ id, reserved }) });
             state.reservedIds = new Set((r.data?.reserved || []).map(String));
             renderConfigs();
+            renderMultiUI();
             showToast(t(reserved ? 'role.setReserved' : 'role.setAuto'), 'success', 4000);
             // the shared group is rebuilt in the background
             setTimeout(() => { if (typeof loadMultiState === 'function') loadMultiState(); }, 4000);
@@ -3478,8 +3490,6 @@
                         <span class="config-protocol">${protocolLabel}</span>
                         ${escapeHtml(config.server)}:${config.server_port}
                         ${multiOn() ? renderMultiRowTags(config) : ''}
-                        ${multiOn() && !multiBlocked(config) && (multiIsSelected(config) || isReserved(config.id)) ? `<button type="button" class="multi-role ${isReserved(config.id) ? 'reserved' : ''}" data-action="multi-role" data-id="${escapeHtml(String(config.id))}"
-                            title="${escapeHtml(t('role.title'))}">${isReserved(config.id) ? t('role.reserved') : t('role.auto')}</button>` : ''}
                     </div>
                     </div>
                     <div class="config-actions">
@@ -4509,7 +4519,8 @@
         else if (live && row.delay != null) health = 'ok';
         
         let badge;
-        if (pendingAdd) badge = `<span class="multi-badge pending">${t('multi.pendingAdd')}</span>`;
+        if (row.reserved) badge = `<span class="multi-badge reserved-role">${t('role.badge')}</span>`;
+        else if (pendingAdd) badge = `<span class="multi-badge pending">${t('multi.pendingAdd')}</span>`;
         else if (pendingRemove) badge = `<span class="multi-badge pending">${t('multi.pendingRemove')}</span>`;
         else if (isPrimary) badge = `<span class="multi-badge main">${t('multi.statusMain')}</span>`;
         else badge = `<span class="multi-badge reserve">${t('multi.statusReserve')}</span>`;
@@ -4537,7 +4548,7 @@
         // Check just this server now (sing-box forgets a server whose check failed,
         // so "not checked" could hide "does not answer")
         const checking = multiState.checkingId === id;
-        const checkBtn = pendingAdd ? '' : `<button class="btn btn-sm btn-icon multi-check-one" data-multi-check="${escapeHtml(id)}"
+        const checkBtn = pendingAdd || row.reserved ? '' : `<button class="btn btn-sm btn-icon multi-check-one" data-multi-check="${escapeHtml(id)}"
                 title="${escapeHtml(t('multi.checkOne'))}" ${checking || multiState.checking ? 'disabled' : ''}>
                 ${checking ? '<span class="btn-spinner"></span>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'}
             </button>`;
@@ -4547,9 +4558,14 @@
         let slot = '<span class="multi-slot"></span>';
         if (row.carrying && live) {
             slot = `<span class="multi-slot multi-traffic" title="${escapeHtml(t('multi.carryingTitle'))}"><span class="multi-carry-dot"></span>${t('multi.carrying')}</span>`;
-        } else if (!isPrimary && !fastest) {
-            slot = `<button class="btn btn-sm btn-secondary multi-slot multi-make-main" data-multi-primary="${escapeHtml(id)}"
-                ${pendingRemove ? 'disabled' : ''}>${t('multi.makePrimary')}</button>`;
+        }
+        // the server's role, one choice: main / reserve / only for chosen domains
+        // ("fastest" has no main: automatic / only for chosen domains)
+        if (!pendingAdd && !pendingRemove) {
+            const cur = row.reserved ? 'domains' : isPrimary ? 'main' : 'reserve';
+            const o = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            badge = `<select class="lt-select multi-role-select ${cur}" data-multi-role="${escapeHtml(id)}" title="${escapeHtml(t('role.title'))}">
+                ${fastest ? '' : o('main', t('multi.statusMain'))}${o('reserve', fastest ? t('role.autoShort') : t('multi.statusReserve'))}${o('domains', t('role.reservedShort'))}</select>`;
         }
         
         return `
@@ -4651,9 +4667,28 @@
             const mainId = String((multiState.draft || multiState).primary);
             const head = r => multiState.strategy === 'fastest' ? !!r.carrying : String(r.id) === mainId;
             const ordered = [...rows].sort((a, b) => head(b) - head(a));
-            list.innerHTML = ordered.length
+            // servers "only for chosen domains" are out of the switching: last, under a divider
+            const reservedRows = state.configs.filter(c => isReserved(c.id) && !multiEffectiveById(c.id))
+                .map(c => ({ id: c.id, name: c.name, protocol: c.protocol, subscription_id: c.subscription_id || '', status: 'unknown', delay: null, carrying: false, reserved: true }));
+            list.innerHTML = (ordered.length
                 ? ordered.map(renderMultiRow).join('')
-                : `<div class="multi-empty">${t('multi.empty')}</div>`;
+                : `<div class="multi-empty">${t('multi.empty')}</div>`)
+                + (reservedRows.length ? `<div class="config-role-sep">${t('role.sep')}</div>` + reservedRows.map(renderMultiRow).join('') : '');
+            list.querySelectorAll('select[data-multi-role]').forEach(sel => sel.addEventListener('change', () => {
+                const id = sel.dataset.multiRole, v = sel.value;
+                const wasMain = String((multiState.draft || multiState).primary) === String(id) && multiState.strategy !== 'fastest';
+                if (v === 'main') {
+                    // a server back from "chosen domains" joins the group in the background first
+                    if (isReserved(id)) { setServerRole(id, false); showToast(t('role.mainLater'), 'info', 6000); } else multiSetPrimary(id);
+                } else if (v === 'domains') {
+                    if (wasMain) { showToast(t('role.mainFirst'), 'info', 5000); renderMultiUI(); return; }
+                    setServerRole(id, true);
+                } else if (isReserved(id)) {
+                    setServerRole(id, false);
+                } else if (wasMain) {
+                    showToast(t('role.mainFirst'), 'info', 5000); renderMultiUI();
+                }
+            }));
             list.querySelectorAll('[data-multi-primary]').forEach(b =>
                 b.addEventListener('click', () => multiSetPrimary(b.dataset.multiPrimary)));
             list.querySelectorAll('[data-multi-check]').forEach(b =>
