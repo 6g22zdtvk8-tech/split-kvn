@@ -466,6 +466,13 @@
                             <button type="button" class="multi-strategy-btn" role="radio" aria-checked="false" data-multi-strategy="fastest" data-i18n="multi.strategyFastest">Fastest</button>
                         </div>
                         <div class="multi-strategy-hint" id="multi-strategy-hint"></div>
+                        <!-- how much faster another server must be before "fastest" (and the domains'
+                             "several servers") switch to it -->
+                        <div class="multi-tolerance" id="multi-tolerance">
+                            <span data-i18n="multi.tolBefore">Switch to another server when it is faster by</span>
+                            <select class="lt-select" id="multi-tolerance-select"></select>
+                            <span data-i18n="multi.tolAfter">ms</span>
+                        </div>
                         <div class="multi-list" id="multi-list"></div>
                         <div class="auto-update-info" id="multi-info"></div>
                     </div>

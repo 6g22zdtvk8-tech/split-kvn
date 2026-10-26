@@ -527,6 +527,10 @@ MULTI_FILE="$VPN_MANAGER_HOME/multi.json"
 # on the counter). Every server costs router memory and a check every minute
 MULTI_LIMIT=$(jq -r '(.multi_limit // 64) | if type == "number" then (if . < 8 then 8 elif . > 128 then 128 else floor end) else 64 end' "$SETTINGS_FILE" 2>/dev/null)
 case "$MULTI_LIMIT" in ''|*[!0-9]*) MULTI_LIMIT=64 ;; esac
+# "fastest" and the domains' "several servers": switch only when another server is faster
+# by this many ms (settings.json "multi_tolerance", 50–1000 step 50, set in the panel)
+MULTI_TOLERANCE=$(jq -r '(.multi_tolerance // 150) | if type == "number" then (if . < 50 then 50 elif . > 1000 then 1000 else (. / 50 | floor) * 50 end) else 150 end' "$SETTINGS_FILE" 2>/dev/null)
+case "$MULTI_TOLERANCE" in ''|*[!0-9]*) MULTI_TOLERANCE=150 ;; esac
 CLASH_API="http://127.0.0.1:9090"
 
 multi_state() {
@@ -699,12 +703,12 @@ apply_multi_config() {
         | map(. + {k: (if .d > 0 then .d else 999999 end)}) | sort_by(.k) | map(.t)')
 
     local strategy=$(printf '%s' "$state" | jq -r '.strategy')
-    items=$(jq -c -n --argjson items "$items" --argjson tags "$tags" --argjson tail "$tail_tags" --arg main "m-$primary" \
+    items=$(jq -c -n --argjson items "$items" --argjson tags "$tags" --argjson tail "$tail_tags" --arg main "m-$primary" --argjson tol "$MULTI_TOLERANCE" \
             --arg strategy "$strategy" '
         $items + [
           {type: "selector", tag: "vpn-main", outbounds: $tags, default: $main},
           {type: "urltest",  tag: "vpn-auto", outbounds: $tags,
-           url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: 150, idle_timeout: "30m"},
+           url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: $tol, idle_timeout: "30m"},
           # Every new connection tries the main server first ("fastest": the fastest one);
           # only a connection that fails there goes on to the next — one by one, for that
           # connection alone. A server that failed used to sit out for 3 minutes: with a whole
@@ -901,7 +905,7 @@ multi_status_json() {
     dserv=$(domain_servers_json); [ -n "$dserv" ] || dserv='{}'
     multi_catalog | jq -c --argjson st "$state" --argjson eff "$eff" --argjson px "$proxies" --argjson notices "$notices" \
         --argjson limit "$MULTI_LIMIT" --argjson running "$running" --argjson chk "$checks" --argjson now "$(date +%s)" \
-        --argjson dserv "$dserv" '
+        --argjson dserv "$dserv" --argjson tol "$MULTI_TOLERANCE" '
         (map({key: .id, value: .}) | from_entries) as $cat
         | $px.proxies as $p
         | ($p["vpn-main"].now // ("m-" + $st.primary)) as $main
@@ -917,7 +921,7 @@ multi_status_json() {
         | (if $fb == "vpn-auto" then $auto elif $fb == "vpn-main" then $main else $fb end) as $carrier
         | def last_delay($t): ($p[$t].history // []) | if length > 0 then .[-1].delay else null end;
           def alive($t): ($p[$t].alive // null);
-        {mode: $st.mode, strategy: $st.strategy, limit: $limit, primary: $st.primary, members: $st.members, notices: $notices,
+        {mode: $st.mode, strategy: $st.strategy, limit: $limit, tolerance: $tol, primary: $st.primary, members: $st.members, notices: $notices,
            last_check: ([$eff.ids[] | ($p["m-" + .].history // []) | .[-1].time? // empty] | max),
            subscriptions: $st.subscriptions, truncated: $eff.truncated, running: $running,
            effective: [$eff.ids[] | . as $id | ("m-" + $id) as $t | last_delay($t) as $d
@@ -2639,7 +2643,7 @@ apply_via_rules() {
         items=$(printf '%s' "$items" | jq -c --argjson o "$out" '. + [$o]')
     done
     local tmp="/tmp/singbox_via.$$.json"
-    jq --argjson ov "$ov" --argjson gm "$gmap" --argjson items "$items" --argjson have "$have" --arg single "$single" '
+    jq --argjson ov "$ov" --argjson gm "$gmap" --argjson items "$items" --argjson have "$have" --arg single "$single" --argjson tol "$MULTI_TOLERANCE" '
         def isvia: (.tag // "") | (startswith("x-") or startswith("via-") or startswith("vg-"));
         # the router jq has no regex: a subnet is digits, dots and a slash, or has a colon
         def isnet: contains(":") or (explode | all(. == 46 or . == 47 or (. >= 48 and . <= 57)));
@@ -2669,7 +2673,7 @@ apply_via_rules() {
                         + [$items[] | select(.type != "wireguard")]
                         # a dedicated group: the fastest of its servers, re-checked every minute
                         + [$groups[] | select(.tag as $t | $used | index($t)) | {type: "urltest", tag: ("vg-" + .tag), outbounds: [.members[] | $tagof[.]],
-                            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: 150, idle_timeout: "30m"}]
+                            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: $tol, idle_timeout: "30m"}]
                         # the entry way: the server (or the group) first; multi-health.sh switches
                         # it to the shared group while that does not answer
                         + [$used[] | . as $u | if startswith("g") and ($tagof | has($u) | not)

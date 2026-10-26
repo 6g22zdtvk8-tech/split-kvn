@@ -105,6 +105,23 @@ case "$REQUEST_METHOD" in
                 respond_state
                 ;;
 
+            tolerance)
+                # {"ms": N} — "fastest" switches only when another server is faster by N ms
+                # (50–1000, step 50); the domains' "several servers" too. A sing-box restart
+                N=$(printf '%s' "$BODY" | jq -r '.ms // empty | if type == "number" then floor else empty end')
+                case "$N" in ''|*[!0-9]*) json_error "Invalid value" 400; exit 0 ;; esac
+                [ "$N" -ge 50 ] && [ "$N" -le 1000 ] && [ $((N % 50)) -eq 0 ] || { json_error "Invalid value" 400; exit 0; }
+                tmp="$SETTINGS_FILE.tmp.$$"
+                jq --argjson n "$N" '.multi_tolerance = $n' "$SETTINGS_FILE" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$SETTINGS_FILE" \
+                    || { rm -f "$tmp"; json_error "Cannot save" 500; exit 0; }
+                MULTI_TOLERANCE=$N
+                log_action "MULTI" "Switch threshold: $N ms"
+                if [ "$(printf '%s' "$STATE" | jq -r '.mode')" = "multi" ]; then
+                    ( apply_multi_config && singbox_config_ok && multi_restart_vpn ) </dev/null >/dev/null 2>&1 &
+                fi
+                respond_state
+                ;;
+
             limit)
                 # {"limit": N} — how many servers the group may run (8–128); not shown in the
                 # panel, the counter's hidden menu sets it

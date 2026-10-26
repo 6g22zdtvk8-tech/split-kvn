@@ -401,6 +401,9 @@
             'multi.statusReserve': 'Reserve',
             'multi.strategyPrimary': 'Main server',
             'multi.strategyFastest': 'Fastest',
+            'multi.tolBefore': 'Switch to another server when it is faster by',
+            'multi.tolAfter': 'ms',
+            'multi.tolSet': 'Switch threshold: {ms} ms. sing-box restarts — the internet blinks for a couple of seconds',
             'multi.strategyPrimaryHint': 'Traffic goes through the main server; the others step in when it fails.',
             'multi.strategyFastestHint': 'Traffic goes through the fastest server: the router measures all of them every minute and switches only when another one is clearly faster.',
             'multi.strategySet': 'Mode changed',
@@ -1654,6 +1657,9 @@
             'multi.statusReserve': 'Запасной',
             'multi.strategyPrimary': 'Главный сервер',
             'multi.strategyFastest': 'Самый быстрый',
+            'multi.tolBefore': 'Переключаться на другой сервер, если он быстрее на',
+            'multi.tolAfter': 'мс',
+            'multi.tolSet': 'Порог переключения: {ms} мс. sing-box перезапускается — интернет моргнёт на пару секунд',
             'multi.strategyPrimaryHint': 'Трафик идёт через главный сервер, остальные подхватывают, если он упал.',
             'multi.strategyFastestHint': 'Трафик идёт через самый быстрый сервер: роутер меряет все раз в минуту и переключается, только если другой заметно быстрее.',
             'multi.strategySet': 'Режим изменён',
@@ -4297,6 +4303,7 @@
         multiState.available = true;
         multiState.mode = data.mode === 'multi' ? 'multi' : 'single';
         multiState.limit = parseInt(data.limit, 10) || 64;
+        multiState.tolerance = parseInt(data.tolerance, 10) || 150;
         multiState.primary = data.primary ? String(data.primary) : '';
         multiState.strategy = data.strategy === 'fastest' ? 'fastest' : 'primary';
         multiState.members = Array.isArray(data.members) ? data.members.map(String) : [];
@@ -4505,11 +4512,32 @@
         try {
             multiApplyState(await multiPost('/strategy', { strategy }));
             showToast(t('multi.strategySet'), 'success');
+            // sing-box restarts: which server carries traffic is known a few seconds later
+            setTimeout(loadMultiState, 6000);
+            setTimeout(loadMultiState, 15000);
         } catch (e) {
             showToast(multiErrorText(e), 'error');
         } finally {
             multiState.settingStrategy = null;
             if (loader) loader.classList.add('hidden');
+            renderMultiUI();
+        }
+    }
+
+    // How much faster another server must be to take the traffic ("fastest", and the
+    // domains' "several servers"); sing-box restarts to take it
+    async function multiSetTolerance(ms) {
+        if (!(ms >= 50 && ms <= 1000) || ms === multiState.tolerance || multiState.settingTolerance) return;
+        multiState.settingTolerance = true;
+        try {
+            multiApplyState(await multiPost('/tolerance', { ms }));
+            multiState.tolerance = ms;
+            showToast(t('multi.tolSet', { ms }), 'success', 5000);
+            setTimeout(loadMultiState, 8000);
+        } catch (e) {
+            showToast(multiErrorText(e), 'error');
+        } finally {
+            multiState.settingTolerance = false;
             renderMultiUI();
         }
     }
@@ -4810,6 +4838,15 @@
             });
             const hint = $('#multi-strategy-hint');
             if (hint) hint.textContent = t(multiState.strategy === 'fastest' ? 'multi.strategyFastestHint' : 'multi.strategyPrimaryHint');
+            const tsel = $('#multi-tolerance-select');
+            if (tsel) {
+                if (!tsel.options.length) {
+                    for (let n = 50; n <= 1000; n += 50) tsel.insertAdjacentHTML('beforeend', `<option value="${n}">${n}</option>`);
+                    tsel.addEventListener('change', () => multiSetTolerance(parseInt(tsel.value, 10)));
+                }
+                if (document.activeElement !== tsel) tsel.value = String(multiState.tolerance || 150);
+                tsel.disabled = multiState.applying || !!multiState.settingTolerance;
+            }
         }
 
         const checkBtn = $('#multi-check-btn');
