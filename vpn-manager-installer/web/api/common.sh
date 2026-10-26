@@ -513,8 +513,8 @@ list_configs() {
 # ============================================
 # One server leads (the user's choice), the others stand by. In sing-box:
 #   vpn       fallback: every new connection tries vpn-main, then vpn-auto, then
-#             each server in turn;
-#             whatever failed to connect sits out for 3 minutes
+#             each server in turn; a failure sets a server aside for 1 s only
+#             (it was 3 minutes), so the main server keeps carrying the home
 #   vpn-main  selector: the main server; switched through the Clash API, no restart
 #   vpn-auto  urltest: the fastest of the ticked servers, re-checked every minute
 #   m-<id>    one outbound per ticked server
@@ -701,10 +701,15 @@ apply_multi_config() {
           {type: "selector", tag: "vpn-main", outbounds: $tags, default: $main},
           {type: "urltest",  tag: "vpn-auto", outbounds: $tags,
            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: 150, idle_timeout: "30m"},
-          # After vpn-auto every server once more, one by one: right after the main
-          # server dies, urltest may still point at it until its next check
-          # "fastest" (B42): the main server is skipped, the fastest leads
-          {type: "fallback", tag: "vpn", blacklist_timeout: "3m",
+          # Every new connection tries the main server first ("fastest": the fastest one);
+          # only a connection that fails there goes on to the next — one by one, for that
+          # connection alone. A server that failed used to sit out for 3 minutes: with a whole
+          # home behind it some connection always failed (a site that does not answer, a
+          # server that refuses one site), so the main server was nearly always set aside
+          # and traffic jumped between servers (owner, 26.10). 1 s is the shortest sing-box
+          # takes (0 means its default, a minute). A dead main server is caught by
+          # multi-health.sh (checked every minute), which moves vpn-main on
+          {type: "fallback", tag: "vpn", blacklist_timeout: "1s",
            outbounds: ((if $strategy == "fastest" then ["vpn-auto"] else ["vpn-main", "vpn-auto"] end) + $tail)}
         ]') || return 1
 
@@ -897,7 +902,10 @@ multi_status_json() {
         # the fallback says which group carries new connections: vpn-main, or
         # vpn-auto while the main server sits out after a failure
         | ($st.strategy == "fastest") as $fastest
-        | ($p["vpn"].now // (if $fastest then "vpn-auto" else "vpn-main" end)) as $fb
+        # (the fallback's "now" is only the last connection's way: one connection that a
+        # server refused would flip the panel to "moving traffic" — the main group carries
+        # the home since a failure sets it aside for 1 s only)
+        | (if $fastest then "vpn-auto" else "vpn-main" end) as $fb
         | ($fb != "vpn-main" and ($fastest | not)) as $main_out
         | (if $fb == "vpn-auto" then $auto elif $fb == "vpn-main" then $main else $fb end) as $carrier
         | def last_delay($t): ($p[$t].history // []) | if length > 0 then .[-1].delay else null end;
