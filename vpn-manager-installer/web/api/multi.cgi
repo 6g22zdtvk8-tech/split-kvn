@@ -134,7 +134,9 @@ case "$REQUEST_METHOD" in
 
             check-one)
                 ID=$(printf '%s' "$BODY" | jq -r '.id // empty')
-                multi_effective "$STATE" | jq -e --arg id "$ID" '.ids | index($id)' >/dev/null 2>&1 \
+                # a server of the group, or one "only for chosen domains"
+                { multi_effective "$STATE" | jq -e --arg id "$ID" '.ids | index($id)' >/dev/null 2>&1 \
+                  || dedicated_ids | jq -e --arg id "$ID" 'index($id)' >/dev/null 2>&1; } \
                     || { json_error "multi.errors.notFound" 400; exit 0; }
                 multi_check_one "$ID"
                 respond_state

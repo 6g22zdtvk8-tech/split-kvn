@@ -4290,6 +4290,7 @@
         multiState.members = Array.isArray(data.members) ? data.members.map(String) : [];
         multiState.subscriptions = Array.isArray(data.subscriptions) ? data.subscriptions.map(String) : [];
         multiState.effective = Array.isArray(data.effective) ? data.effective : [];
+        multiState.reservedChecks = data.reserved_checks || {};
         multiState.truncated = parseInt(data.truncated, 10) || 0;
         multiState.running = !!data.running;
         multiState.lastCheck = data.last_check || null;
@@ -4548,7 +4549,7 @@
         // Check just this server now (sing-box forgets a server whose check failed,
         // so "not checked" could hide "does not answer")
         const checking = multiState.checkingId === id;
-        const checkBtn = pendingAdd || row.reserved ? '' : `<button class="btn btn-sm btn-icon multi-check-one" data-multi-check="${escapeHtml(id)}"
+        const checkBtn = pendingAdd ? '' : `<button class="btn btn-sm btn-icon multi-check-one" data-multi-check="${escapeHtml(id)}"
                 title="${escapeHtml(t('multi.checkOne'))}" ${checking || multiState.checking ? 'disabled' : ''}>
                 ${checking ? '<span class="btn-spinner"></span>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'}
             </button>`;
@@ -4669,7 +4670,9 @@
             const ordered = [...rows].sort((a, b) => head(b) - head(a));
             // servers "only for chosen domains" are out of the switching: last, under a divider
             const reservedRows = state.configs.filter(c => isReserved(c.id) && !multiEffectiveById(c.id))
-                .map(c => ({ id: c.id, name: c.name, protocol: c.protocol, subscription_id: c.subscription_id || '', status: 'unknown', delay: null, carrying: false, reserved: true }));
+                .map(c => { const rc = (multiState.reservedChecks || {})[String(c.id)] || {};
+                    return { id: c.id, name: c.name, protocol: c.protocol, subscription_id: c.subscription_id || '', status: rc.check_error ? 'down' : 'unknown',
+                             delay: rc.delay ?? null, check_error: rc.check_error || null, carrying: false, reserved: true }; });
             list.innerHTML = (ordered.length
                 ? ordered.map(renderMultiRow).join('')
                 : `<div class="multi-empty">${t('multi.empty')}</div>`)

@@ -856,12 +856,14 @@ multi_checks_merge() {
 
 # Check one server of the group now through sing-box itself; records the result
 multi_check_one() {
-    local id="$1" r t=$(date +%s)
-    r=$(curl -s -m 20 "$CLASH_API/proxies/m-$id/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=15000" 2>/dev/null)
-    multi_checks_merge "$(printf '%s' "$r" | jq -c --arg k "m-$id" --argjson t "$t" '
+    local id="$1" r t=$(date +%s) k="m-$1"
+    # a server "only for chosen domains" runs as x-<id> (apply_via_rules)
+    jq -e --arg k "$k" '[((.outbounds // []) + (.endpoints // []))[].tag] | index($k)' "$SINGBOX_CONFIG" >/dev/null 2>&1 || k="x-$id"
+    r=$(curl -s -m 20 "$CLASH_API/proxies/$k/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=15000" 2>/dev/null)
+    multi_checks_merge "$(printf '%s' "$r" | jq -c --arg k "$k" --argjson t "$t" '
         if (.delay // 0) > 0 then {($k): {ok: true, delay: .delay, time: $t}}
         else {($k): {ok: false, error: (if (.message // "") == "Timeout" then "timeout" else "failed" end), time: $t}} end' 2>/dev/null \
-        || printf '{"m-%s":{"ok":false,"error":"failed","time":%s}}' "$id" "$t")"
+        || printf '{"%s":{"ok":false,"error":"failed","time":%s}}' "$k" "$t")"
 }
 
 # Check the whole group: sing-box returns only the servers that answered
@@ -921,7 +923,13 @@ multi_status_json() {
                          elif $t == $main and ($fastest | not) then "primary"
                          elif $d == null then "unknown" else "reserve" end),
                 main: ($t == $main and ($fastest | not)),
-                carrying: ($st.mode == "multi" and $t == $carrier)}]}
+                carrying: ($st.mode == "multi" and $t == $carrier)}],
+           # servers "only for chosen domains" (x-<id>): their last check, for the panel
+           reserved_checks: ([$p | to_entries[] | select(.key | startswith("x-"))
+               | {key: (.key | ltrimstr("x-")), value: (((.value.history // []) | if length > 0 then .[-1].delay else null end) as $d
+                   | ($chk[.key] // null) as $c
+                   | {delay: (if $d != null and $d > 0 then $d elif $c != null and $c.ok == true then $c.delay else null end),
+                      check_error: (if ($d == null or $d == 0) and $c != null and $c.ok == false then $c.error else null end)})}] | from_entries)}
         | if .mode != "multi" then .effective = [] else . end'
 }
 
@@ -2566,7 +2574,8 @@ apply_via_rules() {
                                             | {via: ($via | map_values(if contains(",") and (startswith("g:") | not) then "g:~" + . else . end)),
                                                groups: (((.groups // {}) | with_entries(select((.value | type) == "array")))
                                                         + (reduce $sets[] as $x ({}; . + {("~" + $x): ($x | split(","))}))),
-                                               off: [(.off // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
+                                               off: [(.off // [])[] | strings],
+                                               reserved: [(.reserved // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
     [ -n "$ov" ] || ov='{}'
     # dedicated groups in use get a short tag by name order: g1, g2…
     local gmap
@@ -2585,8 +2594,11 @@ apply_via_rules() {
         single=$(cat "$ACTIVE_CONFIG" 2>/dev/null)
         jq -e '[((.outbounds // []) + (.endpoints // []))[].tag] | index("vpn")' "$SINGBOX_CONFIG" >/dev/null 2>&1 || single=""
     fi
+    # servers "only for chosen domains" are always built: their connection is kept ready
+    # and the panel can check them
     for id in $(printf '%s' "$ov" | jq -r --argjson gm "$gmap" '([(.via // {})[] | select(startswith("g:") | not)]
-                + [(.groups // {}) | to_entries[] | select(.key as $k | $gm | has($k)) | .value[]]) | unique | .[]'); do
+                + [(.groups // {}) | to_entries[] | select(.key as $k | $gm | has($k)) | .value[]]
+                + (.reserved // [])) | unique | .[]'); do
         printf '%s' "$have" | jq -e --arg i "$id" 'index($i)' >/dev/null 2>&1 && continue
         [ "$id" = "$single" ] && continue
         [ -f "$VPN_CONFIGS_DIR/$id.json" ] || continue
