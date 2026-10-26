@@ -116,11 +116,25 @@
             'listtable.errors.empty': "Nothing selected",
             'lt.noOwnSelected': "No own entries among the selected",
             'lt.colVia': 'Connection',
-            'lt.viaGroupPrimary': 'As the group (main server)',
-            'lt.viaGroupFastest': 'As the group (fastest)',
-            'lt.viaGroupSingle': 'As the group (current server)',
+            'lt.viaGroupPrimary': 'Automatic (main server)',
+            'lt.viaGroupFastest': 'Automatic (fastest)',
+            'lt.viaGroupSingle': 'Automatic (current server)',
             'lt.viaPick': '— choose —',
-            'lt.viaGone': 'server removed — goes as the group',
+            'lt.viaMulti': 'Several servers (the fastest of them)…',
+            'lt.viaAuto': 'Automatic servers',
+            'lt.viaUnticked': 'Not ticked on the servers tab',
+            'lt.viaReserved': 'Only for chosen domains',
+            'lt.viaFastestOf': 'Fastest of {n}: {list}',
+            'lt.multiTitle': 'Several servers',
+            'lt.multiDesc': 'The entry goes through the fastest of the ticked servers; while none of them answers — automatically.',
+            'lt.multiNeed': 'Tick at least one server',
+            'role.auto': 'automatic',
+            'role.reserved': 'only for chosen domains',
+            'role.title': 'Role of the server: automatic — takes part in automatic switching; only for chosen domains — never switched to automatically, only domains you send to it use it. Click to change.',
+            'role.setReserved': 'The server now serves only the domains you send to it',
+            'role.setAuto': 'The server takes part in automatic switching again',
+            'role.sep': 'Only for chosen domains',
+            'lt.viaGone': 'server removed — goes automatically',
             'lt.viaNa': 'not for this list',
             'lt.viaInGroup': 'Servers of the group',
             'lt.viaGroups': 'Dedicated groups',
@@ -1344,11 +1358,25 @@
             'listtable.errors.empty': "Ничего не выбрано",
             'lt.noOwnSelected': "Среди выбранных нет своих записей",
             'lt.colVia': 'Подключение',
-            'lt.viaGroupPrimary': 'Как у группы (главный)',
-            'lt.viaGroupFastest': 'Как у группы (самый быстрый)',
-            'lt.viaGroupSingle': 'Как у группы (текущий сервер)',
+            'lt.viaGroupPrimary': 'Автоматически (главный)',
+            'lt.viaGroupFastest': 'Автоматически (самый быстрый)',
+            'lt.viaGroupSingle': 'Автоматически (текущий сервер)',
             'lt.viaPick': '— выбрать —',
-            'lt.viaGone': 'сервер удалён — идёт как у группы',
+            'lt.viaMulti': 'Несколько серверов (самый быстрый из них)…',
+            'lt.viaAuto': 'Автоматические серверы',
+            'lt.viaUnticked': 'Не отмечены на вкладке серверов',
+            'lt.viaReserved': 'Только для выбранных доменов',
+            'lt.viaFastestOf': 'Самый быстрый из {n}: {list}',
+            'lt.multiTitle': 'Несколько серверов',
+            'lt.multiDesc': 'Запись идёт через самый быстрый из отмеченных серверов; пока ни один не отвечает — автоматически.',
+            'lt.multiNeed': 'Отметьте хотя бы один сервер',
+            'role.auto': 'автоматически',
+            'role.reserved': 'только для выбранных доменов',
+            'role.title': 'Роль сервера: «автоматически» — участвует в автопереключении; «только для выбранных доменов» — автоматически на него не переключается, через него идут только домены, которые вы на него направили. Нажмите, чтобы сменить.',
+            'role.setReserved': 'Сервер теперь только для выбранных доменов',
+            'role.setAuto': 'Сервер снова участвует в автопереключении',
+            'role.sep': 'Только для выбранных доменов',
+            'lt.viaGone': 'сервер удалён — идёт автоматически',
             'lt.viaNa': 'не для этого списка',
             'lt.viaInGroup': 'Серверы группы',
             'lt.viaGroups': 'Выделенные группы',
@@ -3226,6 +3254,7 @@
             if (data.success) {
                 state.configs = data.data.configs || [];
                 state.activeConfig = data.data.active;
+                await loadReservedIds();
                 renderConfigs();
                 // The status card may have been drawn before the names were known
                 if (state.lastStatusData) updateStatusDisplay(state.lastStatusData);
@@ -3238,6 +3267,34 @@
                 </div>
             `;
         }
+    }
+
+    // Servers whose role is "only for chosen domains" (B44): out of the automatic switching
+    async function loadReservedIds() {
+        try {
+            const r = await api('/listtable.cgi?what=reserved');
+            state.reservedIds = new Set((r.data?.reserved || []).map(String));
+        } catch (_) { state.reservedIds = state.reservedIds || new Set(); }
+    }
+    const isReserved = id => !!state.reservedIds?.has(String(id));
+
+    async function setServerRole(id, reserved) {
+        try {
+            const r = await api('/listtable.cgi/reserved', { method: 'POST', body: JSON.stringify({ id, reserved }) });
+            state.reservedIds = new Set((r.data?.reserved || []).map(String));
+            renderConfigs();
+            showToast(t(reserved ? 'role.setReserved' : 'role.setAuto'), 'success', 4000);
+            // the shared group is rebuilt in the background
+            setTimeout(() => { if (typeof loadMultiState === 'function') loadMultiState(); }, 4000);
+        } catch (e) { showToast(e.message || 'Error', 'error'); }
+    }
+
+    // Servers "only for chosen domains" go last, under a divider (owner, 26.10)
+    function renderConfigsRoleOrdered(configs, fromSub) {
+        if (!multiOn()) return configs.map(c => renderConfigItem(c, fromSub)).join('');
+        const auto = configs.filter(c => !isReserved(c.id)), resv = configs.filter(c => isReserved(c.id));
+        return auto.map(c => renderConfigItem(c, fromSub)).join('')
+            + (resv.length ? `<div class="config-role-sep">${t('role.sep')}</div>` + resv.map(c => renderConfigItem(c, fromSub)).join('') : '');
     }
 
     // Track expanded subscriptions
@@ -3321,7 +3378,7 @@
                         </div>
                     </div>
                     <div class="subscription-servers ${isExpanded ? '' : 'hidden'}">
-                        ${subConfigs.map(config => renderConfigItem(config, true)).join('')}
+                        ${renderConfigsRoleOrdered(subConfigs, true)}
                     </div>
                     <div class="subscription-footer">
                         ${renderSubscriptionMetadata(sub.metadata)}
@@ -3332,7 +3389,7 @@
         });
         
         // Render standalone configs
-        html += standaloneConfigs.map(config => renderConfigItem(config, false)).join('');
+        html += renderConfigsRoleOrdered(standaloneConfigs, false);
         
         elements.configList.innerHTML = html;
         
@@ -3421,6 +3478,8 @@
                         <span class="config-protocol">${protocolLabel}</span>
                         ${escapeHtml(config.server)}:${config.server_port}
                         ${multiOn() ? renderMultiRowTags(config) : ''}
+                        ${multiOn() && !multiBlocked(config) && (multiIsSelected(config) || isReserved(config.id)) ? `<button type="button" class="multi-role ${isReserved(config.id) ? 'reserved' : ''}" data-action="multi-role" data-id="${escapeHtml(String(config.id))}"
+                            title="${escapeHtml(t('role.title'))}">${isReserved(config.id) ? t('role.reserved') : t('role.auto')}</button>` : ''}
                     </div>
                     </div>
                     <div class="config-actions">
@@ -4131,6 +4190,9 @@
     
     function bindMultiChecks(root) {
         root.querySelectorAll('input[data-indeterminate]').forEach(el => { el.indeterminate = true; });
+        root.querySelectorAll('button[data-action="multi-role"]').forEach(el => {
+            el.addEventListener('click', (e) => { e.stopPropagation(); setServerRole(el.dataset.id, !isReserved(el.dataset.id)); });
+        });
         root.querySelectorAll('input[data-action="multi-server"]').forEach(el => {
             el.addEventListener('change', () => multiToggleServer(el.dataset.id, el.checked));
         });
@@ -5826,30 +5888,65 @@
     const ltServerLabel = s => s.sub ? `${s.name} · ${s.sub}` : s.name;
     function ltServerName(id) {
         if (id && id.startsWith('g:')) return '◆ ' + id.slice(2);
+        if (id && id.includes(',')) {
+            const names = id.split(',').map(x => { const s = lt.servers.find(y => y.id === x); return s ? s.name : x; });
+            return t('lt.viaFastestOf', { n: names.length, list: names.join(', ') });
+        }
         const s = lt.servers.find(x => x.id === id);
         return s ? ltServerLabel(s) : id;
     }
-    const ltViaKnown = id => !id || (id.startsWith('g:') ? Object.prototype.hasOwnProperty.call(lt.groups, id.slice(2)) : lt.servers.some(x => x.id === id));
+    const ltViaKnown = id => !id || (id.startsWith('g:') ? Object.prototype.hasOwnProperty.call(lt.groups, id.slice(2))
+        : id.split(',').every(i => lt.servers.some(x => x.id === i)));
     function ltGroupLabel() {
         return lt.groupMode === 'multi:fastest' ? t('lt.viaGroupFastest')
             : lt.groupMode.startsWith('multi') ? t('lt.viaGroupPrimary') : t('lt.viaGroupSingle');
     }
+    // The connection choice: automatic, one server, or several ("the fastest of these").
+    // Servers "only for chosen domains" come first, under their own heading.
     function ltViaOptions(current, withPick) {
         const opts = [];
         if (withPick) opts.push(`<option value="__pick" selected disabled>${t('lt.viaPick')}</option>`);
         opts.push(`<option value=""${!withPick && !current ? ' selected' : ''}>${escapeHtml(ltGroupLabel())}</option>`);
         const opt = s => `<option value="${escapeHtml(s.id)}"${current === s.id ? ' selected' : ''}>${escapeHtml(ltServerLabel(s))}</option>`;
-        const inGroup = lt.servers.filter(s => s.in_group), rest = lt.servers.filter(s => !s.in_group);
+        const resv = lt.servers.filter(s => s.reserved);
+        const auto = lt.servers.filter(s => !s.reserved && s.in_group);
+        const rest = lt.servers.filter(s => !s.reserved && !s.in_group);
+        if (current && current.includes(',') && ltViaKnown(current)) {
+            opts.push(`<option value="${escapeHtml(current)}" selected>${escapeHtml(ltServerName(current))}</option>`);
+        }
+        opts.push(`<option value="__multi">${escapeHtml(t('lt.viaMulti'))}</option>`);
+        // the servers kept for chosen domains first: that is what they are for (owner, 26.10)
+        if (resv.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaReserved'))}">${resv.map(opt).join('')}</optgroup>`);
+        if (auto.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaAuto'))}">${auto.map(opt).join('')}</optgroup>`);
+        if (rest.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaUnticked'))}">${rest.map(opt).join('')}</optgroup>`);
+        // named groups of 3.1.0–3.1.2 still work, shown only while they exist
         const gnames = Object.keys(lt.groups).sort((a, b) => a.localeCompare(b));
         if (gnames.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaGroups'))}">${gnames.map(n =>
             `<option value="g:${escapeHtml(n)}"${current === 'g:' + n ? ' selected' : ''}>◆ ${escapeHtml(n)}</option>`).join('')}</optgroup>`);
-        if (inGroup.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaInGroup'))}">${inGroup.map(opt).join('')}</optgroup>`);
-        if (rest.length) opts.push(`<optgroup label="${escapeHtml(t('lt.viaOthers'))}">${rest.map(opt).join('')}</optgroup>`);
         if (current && !ltViaKnown(current)) {
             opts.push(`<option value="${escapeHtml(current)}" selected>${escapeHtml(t('lt.viaGone'))}</option>`);
         }
-        opts.push(`<option value="__groups">${escapeHtml(t('lt.viaManage'))}</option>`);
         return opts.join('');
+    }
+
+    // "Several servers…": tick the servers, the entries go through the fastest of them
+    let ltMultiTarget = null;
+    function ltOpenMulti(entries, current) {
+        ltMultiTarget = entries;
+        const have = new Set((current || '').includes(',') || (current && !current.startsWith('g:')) ? current.split(',') : []);
+        const box = s => `<label class="ltm-item"><input type="checkbox" value="${escapeHtml(s.id)}" ${have.has(s.id) ? 'checked' : ''}><span>${escapeHtml(ltServerLabel(s))}</span></label>`;
+        const auto = lt.servers.filter(s => !s.reserved && s.in_group), rest = lt.servers.filter(s => !s.reserved && !s.in_group), resv = lt.servers.filter(s => s.reserved);
+        const part = (title, list) => list.length ? `<div class="ltg-sub">${escapeHtml(title)}</div>${list.map(box).join('')}` : '';
+        $('#lt-multi-list').innerHTML = part(t('lt.viaReserved'), resv) + part(t('lt.viaAuto'), auto) + part(t('lt.viaUnticked'), rest);
+        const msg = $('#lt-multi-msg'); if (msg) { msg.textContent = ''; msg.className = 'validation-message'; }
+        showModal($('#lt-multi-modal'));
+    }
+    async function ltSaveMulti() {
+        const ids = [...$$('#lt-multi-list input:checked')].map(i => i.value);
+        if (!ids.length) { const m = $('#lt-multi-msg'); if (m) { m.textContent = t('lt.multiNeed'); m.className = 'validation-message error'; } return; }
+        hideModal($('#lt-multi-modal'));
+        if (ltMultiTarget) await ltSetVia(ltMultiTarget, ids.sort().join(','));
+        ltMultiTarget = null;
     }
 
     // differs from the default: switched off or a connection of its own
@@ -6081,12 +6178,12 @@
             if (!e.target.classList.contains('lt-via')) return;
             const tr = e.target.closest('tr');
             const entry = lt.entries.find(x => ltKey(x) === tr?.dataset.k);
-            if (e.target.value === '__groups') { e.target.value = entry?.via || ''; ltOpenGroups(); return; }
+            if (e.target.value === '__multi') { e.target.value = entry?.via || ''; if (entry) ltOpenMulti([entry], entry.via); return; }
             if (entry) ltSetVia([entry], e.target.value);
         });
         $('#lt-bulk-via')?.addEventListener('change', e => {
             if (e.target.value === '__pick') return;
-            if (e.target.value === '__groups') { e.target.value = '__pick'; ltOpenGroups(); return; }
+            if (e.target.value === '__multi') { e.target.value = '__pick'; ltOpenMulti(ltSelected(), ''); return; }
             ltSetVia(ltSelected(), e.target.value);
         });
         $('#lt-groups-add')?.addEventListener('click', () => {
@@ -6097,6 +6194,7 @@
             if (e.target.classList.contains('ltg-del')) e.target.closest('.ltg-item')?.remove();
         });
         $('#lt-groups-save')?.addEventListener('click', ltSaveGroups);
+        $('#lt-multi-save')?.addEventListener('click', ltSaveMulti);
         $$('#lt-bulk [data-lt-bulk]').forEach(b => b.addEventListener('click', async () => {
             const what = b.dataset.ltBulk;
             if (what === 'clear') { lt.sel.clear(); renderListTable(); return; }

@@ -5057,3 +5057,11 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 .ltg-servers label { display: flex; gap: 0.375rem; align-items: center; }
 .ltg-servers .ltg-in { color: var(--text-secondary); font-size: 0.6875rem; }
 .ltg-sub { grid-column: 1 / -1; margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.75rem; }
+
+/* B44: server role and "several servers" */
+.multi-role { margin-left: 0.4rem; padding: 0.1rem 0.5rem; font-size: 0.72rem; border-radius: 999px; border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); cursor: pointer; font-family: inherit; }
+.multi-role:hover { color: var(--text-primary); border-color: var(--accent-primary); }
+.multi-role.reserved { color: #f0b429; border-color: rgba(240, 180, 41, 0.6); background: rgba(240, 180, 41, 0.08); }
+.config-role-sep { margin: 0.6rem 0 0.3rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color); font-size: 0.75rem; color: #f0b429; text-transform: uppercase; letter-spacing: 0.04em; }
+.ltm-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 55vh; overflow-y: auto; margin-bottom: 0.5rem; }
+.ltm-item { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0; cursor: pointer; }

@@ -137,6 +137,13 @@ local_file() {
 
 case "$REQUEST_METHOD" in
     GET)
+        if echo "&$QUERY_STRING" | grep -q '&what=reserved'; then
+            # the servers tab: which servers serve only chosen domains
+            r='[]'
+            [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && r=$(jq -c '[(.reserved // [])[] | strings]' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
+            json_success "{\"reserved\":${r:-[]}}"
+            exit 0
+        fi
         SET=$(echo "&$QUERY_STRING" | sed -n "s/.*&set=\([a-z]*\).*/\1/p"); [ "$SET" = "russia" ] || SET=world
         auto=$(jq 'if .auto_update_lists == null then true else .auto_update_lists end' "$SETTINGS_FILE" 2>/dev/null)
         via='{}'
@@ -148,11 +155,14 @@ case "$REQUEST_METHOD" in
         # the servers to choose from: the group's own first (in its order), then the rest
         eff=$(multi_effective | jq -c '.ids' 2>/dev/null); [ -n "$eff" ] || eff='[]'
         ded=$(dedicated_ids)
+        resv='[]'
+        [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && resv=$(jq -c '[(.reserved // [])[] | strings]' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
         # the subscription a server came from, by name (shown next to the server)
         subs=$(jq -c '[(.subscriptions // [])[] | {key: .id, value: (.name // "")}] | from_entries' "$VPN_MANAGER_HOME/subscriptions.json" 2>/dev/null)
         [ -n "$subs" ] || subs='{}'
-        servers=$(multi_catalog | jq -c --argjson eff "$eff" --argjson ded "${ded:-[]}" --argjson subs "$subs" '[.[] | {id, name, protocol, in_group: (.id as $i | $eff | index($i) != null),
+        servers=$(multi_catalog | jq -c --argjson eff "$eff" --argjson ded "${ded:-[]}" --argjson subs "$subs" --argjson resv "${resv:-[]}" '[.[] | {id, name, protocol, in_group: (.id as $i | $eff | index($i) != null),
                                                                   dedicated: (.id as $i | $ded | index($i) != null),
+                                                                  reserved: (.id as $i | $resv | index($i) != null),
                                                                   sub: (if .subscription_id != "" then ($subs[.subscription_id] // "") else "" end)}]
             | (map(select(.in_group)) | sort_by(.id as $i | $eff | index($i))) + (map(select(.in_group | not)) | sort_by(.name))')
         [ -n "$servers" ] || servers='[]'
@@ -255,8 +265,13 @@ case "$REQUEST_METHOD" in
                         # a dedicated group (stage 3)
                         jq -e --arg n "${SERVER#g:}" '(.groups // {}) | has($n)' "$VPN_MANAGER_HOME/list-overrides.json" >/dev/null 2>&1 \
                             || { json_error "listtable.errors.server" 400; exit 0; } ;;
-                    *[!A-Za-z0-9_.@+-]*) json_error "listtable.errors.server" 400; exit 0 ;;
-                    *) [ -f "$VPN_CONFIGS_DIR/$SERVER.json" ] || { json_error "listtable.errors.server" 400; exit 0; } ;;
+                    *[!A-Za-z0-9_.@+,-]*) json_error "listtable.errors.server" 400; exit 0 ;;
+                    *)
+                        # one server, or "id1,id2,…" — the fastest of these
+                        for id in $(printf '%s' "$SERVER" | tr ',' ' '); do
+                            [ -f "$VPN_CONFIGS_DIR/$id.json" ] || { json_error "listtable.errors.server" 400; exit 0; }
+                        done
+                        SERVER=$(printf '%s' "$SERVER" | tr ',' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//') ;;
                 esac
                 DED=$(dedicated_ids)
                 # shellcheck disable=SC2086
@@ -264,6 +279,25 @@ case "$REQUEST_METHOD" in
                 log_action "LIST_TABLE" "via ${SERVER:-group}: $(printf '%s\n' "$VALUES" | grep -c .) entr(y/ies)"
                 rebuild_via "$DED"
                 json_success "{\"applying\":true}"
+                ;;
+            reserved)
+                # {"id":"<config id>","reserved":true|false} — the server's role: only for
+                # chosen domains (out of the shared group, never switched to) or automatic
+                ID=$(printf '%s' "$BODY" | jq -r '.id // ""')
+                R=$(printf '%s' "$BODY" | jq -r 'if .reserved == true then "true" else "false" end')
+                case "$ID" in ""|*[!A-Za-z0-9_.@+-]*) json_error "listtable.errors.server" 400; exit 0 ;; esac
+                [ -f "$VPN_CONFIGS_DIR/$ID.json" ] || { json_error "listtable.errors.server" 400; exit 0; }
+                DED=$(dedicated_ids)
+                OV="$VPN_MANAGER_HOME/list-overrides.json"
+                "$LO" ovlock
+                [ -s "$OV" ] && jq -e 'type == "object"' "$OV" >/dev/null 2>&1 || echo '{"off":[]}' > "$OV"
+                tmp="$OV.tmp.$$"
+                jq --arg id "$ID" --argjson r "$R" '.reserved = (((.reserved // []) - [$id]) + (if $r then [$id] else [] end))' "$OV" > "$tmp" \
+                    && [ -s "$tmp" ] && mv "$tmp" "$OV" || { rm -f "$tmp"; "$LO" ovunlock; json_error "Cannot save" 500; exit 0; }
+                "$LO" ovunlock
+                log_action "LIST_TABLE" "Server $ID: $([ "$R" = true ] && echo "only for chosen domains" || echo automatic)"
+                rebuild_via "$DED"
+                json_success "{\"reserved\":$(jq -c '.reserved // []' "$OV")}"
                 ;;
             groups)
                 # {"groups":{"<name>":[<config id>…]}} — the whole set; entries of a removed

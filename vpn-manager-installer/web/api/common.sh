@@ -2542,13 +2542,16 @@ update_dnsmasq_domains() {
 # completely when nothing is chosen.
 LIST_OVERRIDES="$VPN_MANAGER_HOME/list-overrides.json"
 
-# Servers of the dedicated groups some entry goes through (JSON array of config ids)
+# Servers kept out of the shared group (JSON array of config ids): the ones whose role is
+# "only for chosen domains" ("reserved", set on the servers tab), and the servers of the
+# named dedicated groups of 3.1.0–3.1.2 some entry still goes through
 dedicated_ids() {
     [ -s "$LIST_OVERRIDES" ] || { echo '[]'; return; }
     jq -c '([(.off // [])[] | strings | ltrimstr("*.") | ltrimstr("*")]) as $off
         | ((.via // {}) | with_entries(select(.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not))
            | [.[] | strings | select(startswith("g:")) | ltrimstr("g:")] | unique) as $used
-        | [(.groups // {}) | to_entries[] | select(.key as $k | $used | index($k)) | (.value // [])[] | strings] | unique' \
+        | ([(.reserved // [])[] | strings]
+           + [(.groups // {}) | to_entries[] | select(.key as $k | $used | index($k)) | (.value // [])[] | strings]) | unique' \
         "$LIST_OVERRIDES" 2>/dev/null || echo '[]'
 }
 
@@ -2556,10 +2559,14 @@ apply_via_rules() {
     [ -f "$SINGBOX_CONFIG" ] || return 1
     local ov='{}'
     [ -s "$LIST_OVERRIDES" ] && ov=$(jq -c '([(.off // [])[] | strings | ltrimstr("*.") | ltrimstr("*")]) as $off
-                                            | {via: ((.via // {}) | with_entries(select((.value | type) == "string" and .value != ""
-                                                       and (.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not)))),
-                                              groups: ((.groups // {}) | with_entries(select((.value | type) == "array"))),
-                                              off: [(.off // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
+                                            | ((.via // {}) | with_entries(select((.value | type) == "string" and .value != ""
+                                                       and (.key | ltrimstr("*.") | ltrimstr("*") | . as $k | $off | index($k) | not)))) as $via
+                                            # "id1,id2,…": the fastest of these servers — an unnamed group "~id1,id2"
+                                            | ([$via[] | select(contains(",") and (startswith("g:") | not))] | unique) as $sets
+                                            | {via: ($via | map_values(if contains(",") and (startswith("g:") | not) then "g:~" + . else . end)),
+                                               groups: (((.groups // {}) | with_entries(select((.value | type) == "array")))
+                                                        + (reduce $sets[] as $x ({}; . + {("~" + $x): ($x | split(","))}))),
+                                               off: [(.off // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
     [ -n "$ov" ] || ov='{}'
     # dedicated groups in use get a short tag by name order: g1, g2…
     local gmap

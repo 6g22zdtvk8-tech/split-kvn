@@ -1207,6 +1207,22 @@
     <!-- Modals -->
     <div id="modal-overlay" class="modal-overlay hidden">
         <!-- B44 stage 3: dedicated groups of servers for chosen entries -->
+        <div id="lt-multi-modal" class="modal hidden">
+            <div class="modal-header">
+                <h3 data-i18n="lt.multiTitle">Several servers</h3>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="section-description" data-i18n="lt.multiDesc">The entry goes through the fastest of the ticked servers.</p>
+                <div id="lt-multi-list" class="ltm-list"></div>
+                <div class="validation-message" id="lt-multi-msg"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close data-i18n="dialog.cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="lt-multi-save" data-i18n="domains.save">Save</button>
+            </div>
+        </div>
+
         <div id="lt-groups-modal" class="modal modal-lg hidden">
             <div class="modal-header">
                 <h3 data-i18n="lt.groupsTitle">Dedicated groups</h3>
