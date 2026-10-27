@@ -1092,6 +1092,7 @@ case "$REQUEST_METHOD" in
                         SKIP_REWRITE=""
                         ACTIVE_GONE=""
                         MULTI_BEFORE=$(multi_members_of_subscription "$ACTION")
+                        OV_BEFORE=$(overrides_servers_of_subscription "$ACTION")
                         CURRENT_SERVERS=$(get_subscription_servers "$ACTION")
                         [ -n "$CURRENT_SERVERS" ] || CURRENT_SERVERS="[]"
                         PLAN=$(jq -c -n --argjson cur "$CURRENT_SERVERS" --argjson new "$SERVERS_JSON" '
@@ -1287,6 +1288,7 @@ case "$REQUEST_METHOD" in
                         
                         log_action "SUBSCRIPTION_REFRESHED" "ID: $ACTION, Servers: $NEW_COUNT, Migrated: $MIGRATED_TO"
                         multi_follow_members "$ACTION" "$MULTI_BEFORE"
+                        overrides_follow_servers "$ACTION" "$OV_BEFORE"
                         multi_resync >/dev/null 2>&1
                         
                         # Form response with migration info

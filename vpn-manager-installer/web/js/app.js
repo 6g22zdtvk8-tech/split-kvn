@@ -125,6 +125,7 @@
             'lt.viaUnticked': 'Not ticked on the servers tab',
             'lt.viaReserved': 'Only for chosen domains',
             'lt.viaFastestOf': 'Fastest of {n}: {list}',
+            'lt.viaSomeGone': '({n} gone from the subscription)',
             'lt.multiTitle': 'Several servers',
             'lt.multiDesc': 'The entry goes through the fastest of the ticked servers; while none of them answers — automatically.',
             'lt.multiNeed': 'Tick at least one server',
@@ -1381,6 +1382,7 @@
             'lt.viaUnticked': 'Не отмечены на вкладке серверов',
             'lt.viaReserved': 'Только для выбранных доменов',
             'lt.viaFastestOf': 'Самый быстрый из {n}: {list}',
+            'lt.viaSomeGone': '({n} пропал из подписки)',
             'lt.multiTitle': 'Несколько серверов',
             'lt.multiDesc': 'Запись идёт через самый быстрый из отмеченных серверов; пока ни один не отвечает — автоматически.',
             'lt.multiNeed': 'Отметьте хотя бы один сервер',
@@ -6066,14 +6068,17 @@
     function ltServerName(id) {
         if (id && id.startsWith('g:')) return '◆ ' + id.slice(2);
         if (id && id.includes(',')) {
-            const names = id.split(',').map(x => { const s = lt.servers.find(y => y.id === x); return s ? s.name : x; });
-            return t('lt.viaFastestOf', { n: names.length, list: names.join(', ') });
+            // a server the subscription dropped is just left out; the rest still carry the entry
+            const ids = id.split(','), known = ids.map(x => lt.servers.find(y => y.id === x)).filter(Boolean);
+            const gone = ids.length - known.length;
+            return t('lt.viaFastestOf', { n: known.length, list: known.map(s => s.name).join(', ') }) + (gone ? ' ' + t('lt.viaSomeGone', { n: gone }) : '');
         }
         const s = lt.servers.find(x => x.id === id);
         return s ? ltServerLabel(s) : id;
     }
+    // known: at least one of the chosen servers still exists (the rest are skipped by the router)
     const ltViaKnown = id => !id || (id.startsWith('g:') ? Object.prototype.hasOwnProperty.call(lt.groups, id.slice(2))
-        : id.split(',').every(i => lt.servers.some(x => x.id === i)));
+        : id.split(',').some(i => lt.servers.some(x => x.id === i)));
     function ltGroupLabel() {
         return lt.groupMode === 'multi:fastest' ? t('lt.viaGroupFastest')
             : lt.groupMode.startsWith('multi') ? t('lt.viaGroupPrimary') : t('lt.viaGroupSingle');

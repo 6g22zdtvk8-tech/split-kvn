@@ -821,6 +821,65 @@ multi_follow_members() {
     return 0
 }
 
+# The same for the table (B44): servers of one subscription that entries go through or
+# that are kept "only for chosen domains" — taken before a refresh. [{id, name, server, server_port}]
+overrides_servers_of_subscription() {
+    local sub="$1" id f out="["
+    [ -s "$LIST_OVERRIDES" ] || { echo '[]'; return; }
+    for id in $(jq -r '[(.via // {})[] | strings | select(startswith("g:") | not) | split(",")[]]
+                       + [(.groups // {})[][]?] + [(.reserved // [])[]] | map(strings) | unique | .[]' "$LIST_OVERRIDES" 2>/dev/null); do
+        f="$VPN_CONFIGS_DIR/$id.json"
+        [ -f "$f" ] || continue
+        [ "$(jq -r '.subscription_id // empty' "$f" 2>/dev/null)" = "$sub" ] || continue
+        [ "$out" = "[" ] || out="$out,"
+        out="$out$(jq -c '{id, name, server, server_port}' "$f")"
+    done
+    echo "$out]"
+}
+
+# After a refresh: a server the table uses that came back under a new id (same name, address
+# and port; then the same name alone) is renamed everywhere in list-overrides.json — FOLK hands
+# out new ids on every refresh and the entries silently lost a server (owner, 27.10)
+overrides_follow_servers() {
+    local sub="$1" before="$2"
+    [ -n "$before" ] && [ "$before" != "[]" ] && [ -s "$LIST_OVERRIDES" ] || return 0
+    local map='{}' n i old id name srv port new f
+    n=$(printf '%s' "$before" | jq 'length'); i=0
+    while [ $i -lt $n ]; do
+        old=$(printf '%s' "$before" | jq -c ".[$i]"); i=$((i + 1))
+        id=$(printf '%s' "$old" | jq -r '.id')
+        [ -f "$VPN_CONFIGS_DIR/$id.json" ] && continue
+        name=$(printf '%s' "$old" | jq -r '.name'); srv=$(printf '%s' "$old" | jq -r '.server'); port=$(printf '%s' "$old" | jq -r '.server_port')
+        new=""
+        for f in "$VPN_CONFIGS_DIR"/*.json; do
+            [ -f "$f" ] || continue
+            jq -e --arg s "$sub" --arg n "$name" --arg a "$srv" --arg p "$port" \
+                '.subscription_id == $s and .name == $n and .server == $a and (.server_port | tostring) == $p' "$f" >/dev/null 2>&1 \
+                && { new=$(basename "$f" .json); break; }
+        done
+        if [ -z "$new" ]; then
+            for f in "$VPN_CONFIGS_DIR"/*.json; do
+                [ -f "$f" ] || continue
+                jq -e --arg s "$sub" --arg n "$name" '.subscription_id == $s and .name == $n and (has("missing_since") | not)' "$f" >/dev/null 2>&1 \
+                    && { new=$(basename "$f" .json); break; }
+            done
+        fi
+        [ -n "$new" ] && map=$(printf '%s' "$map" | jq -c --arg o "$id" --arg n "$new" '. + {($o): $n}')
+    done
+    [ "$map" = '{}' ] && return 0
+    local tmp="$LIST_OVERRIDES.tmp.$$"
+    "$VPN_MANAGER_HOME/scripts/list-overrides.sh" ovlock 2>/dev/null
+    jq --argjson m "$map" '
+        def ren: if $m[.] then $m[.] else . end;
+        (if .via then .via |= map_values(if startswith("g:") then . else (split(",") | map(ren) | unique | join(",")) end) else . end)
+        | (if .groups then .groups |= map_values(map(ren)) else . end)
+        | (if .reserved then .reserved |= (map(ren) | unique) else . end)' "$LIST_OVERRIDES" > "$tmp" \
+        && [ -s "$tmp" ] && mv "$tmp" "$LIST_OVERRIDES" || rm -f "$tmp"
+    "$VPN_MANAGER_HOME/scripts/list-overrides.sh" ovunlock 2>/dev/null
+    log_action "LIST_TABLE" "Servers came back under new ids after the refresh: $(printf '%s' "$map" | jq -r 'to_entries | map(.key + " → " + .value) | join(", ")')"
+    return 0
+}
+
 # After servers came or went (subscription refresh, a deleted config or subscription):
 # rebuild the group only if the set sing-box runs is no longer the ticked set
 multi_resync() {
