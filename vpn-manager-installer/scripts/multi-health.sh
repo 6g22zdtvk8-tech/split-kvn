@@ -49,10 +49,25 @@ for _sel in $(curl -s -m 5 "$_api/proxies" 2>/dev/null | jq -r '.proxies | keys[
     [ -n "$_x" ] || continue
     # a dedicated group is fine while any of its servers answers (the group check also
     # tells urltest which one); a single server must answer itself
-    case "$_x" in
-        vg-*) _ok=$(curl -s -m 15 "$_api/group/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '[.[]? | select(. > 0)] | length > 0' >/dev/null 2>&1 && echo 1) ;;
-        *)    _ok=$(curl -s -m 12 "$_api/proxies/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '(.delay // 0) > 0' >/dev/null 2>&1 && echo 1) ;;
-    esac
+    # sing-box answers a group check with {} while its own minute check of that group runs —
+    # that is "busy", not "dead": ask again, then server by server (a false "dead" sent the
+    # domains to the shared group for a minute several times an hour, 27.10)
+    _ok=""
+    for _try in 1 2; do
+        case "$_x" in
+            vg-*) _ok=$(curl -s -m 15 "$_api/group/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '[.[]? | select(. > 0)] | length > 0' >/dev/null 2>&1 && echo 1) ;;
+            *)    _ok=$(curl -s -m 12 "$_api/proxies/$_x/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000" | jq -e '(.delay // 0) > 0' >/dev/null 2>&1 && echo 1) ;;
+        esac
+        [ "$_ok" = 1 ] && break
+        sleep 3
+    done
+    if [ "$_ok" != 1 ]; then
+        case "$_x" in vg-*)
+            for _m in $(curl -s -m 5 "$_api/proxies/$_x" | jq -r '.all[]?' 2>/dev/null); do
+                curl -s -m 10 "$_api/proxies/$_m/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=6000" | jq -e '(.delay // 0) > 0' >/dev/null 2>&1 && { _ok=1; break; }
+            done ;;
+        esac
+    fi
     if [ "$_ok" = 1 ]; then
         _want="$_x"
     else
