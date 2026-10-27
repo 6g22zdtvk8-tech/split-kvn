@@ -5093,3 +5093,5 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 /* the domains chip lives on the sub line: let it wrap below instead of being cut off */
 .multi-row-sub:has(.multi-domains) { white-space: normal; overflow: visible; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.35rem; }
 .multi-row-sub .multi-domains { margin-left: 0; }
+.config-role-sep .role-sep-hint { display: block; margin-top: 0.2rem; text-transform: none; letter-spacing: 0; font-size: 0.75rem; color: var(--text-secondary); text-decoration: none; }
+.config-role-sep .role-sep-hint:hover { color: var(--accent-primary); text-decoration: underline; }

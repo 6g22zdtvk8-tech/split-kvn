@@ -136,6 +136,7 @@
             'role.setReserved': 'The server now serves only the domains you send to it. sing-box restarts: the internet blinks for a couple of seconds',
             'role.setAuto': 'The server takes part in automatic switching again. sing-box restarts: the internet blinks for a couple of seconds',
             'role.sep': 'Only for chosen domains',
+            'role.sepHint': 'domains get their servers in Domains and subnets → Table, the Connection column ›',
             'role.badge': 'Chosen domains',
             'role.domainsN': '{n} domains',
             'role.domainsTitle': 'Goes through this server:',
@@ -1393,6 +1394,7 @@
             'role.setReserved': 'Сервер теперь только для выбранных доменов. sing-box перезапускается — интернет моргнёт на пару секунд',
             'role.setAuto': 'Сервер снова участвует в автопереключении. sing-box перезапускается — интернет моргнёт на пару секунд',
             'role.sep': 'Только для выбранных доменов',
+            'role.sepHint': 'домены назначаются во вкладке «Домены и подсети» → «Таблица», колонка «Подключение» ›',
             'role.badge': 'Для доменов',
             'role.domainsN': 'доменов: {n}',
             'role.domainsTitle': 'Через этот сервер идут:',
@@ -4801,7 +4803,13 @@
             list.innerHTML = (ordered.length
                 ? ordered.map(renderMultiRow).join('')
                 : `<div class="multi-empty">${t('multi.empty')}</div>`)
-                + (reservedRows.length ? `<div class="config-role-sep">${t('role.sep')}</div>` + reservedRows.map(renderMultiRow).join('') : '');
+                + (reservedRows.length ? `<div class="config-role-sep">${t('role.sep')}<a href="#" class="role-sep-hint" data-goto-table>${t('role.sepHint')}</a></div>` + reservedRows.map(renderMultiRow).join('') : '');
+            // the hint under the heading: where domains get their servers
+            list.querySelectorAll('[data-goto-table]').forEach(b => b.addEventListener('click', e => {
+                e.preventDefault();
+                switchTab('domains');
+                document.querySelector('.subtab[data-subtab="list-table"]')?.click();
+            }));
             list.querySelectorAll('[data-multi-domains]').forEach(b => b.addEventListener('click', e => multiDomainsPopover(e, b.dataset.multiDomains)));
             list.querySelectorAll('[data-multi-unassign]').forEach(b => b.addEventListener('click', () => multiUnassign(b.dataset.multiUnassign)));
             list.querySelectorAll('select[data-multi-role]').forEach(sel => sel.addEventListener('change', () => {
