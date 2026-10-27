@@ -4326,7 +4326,9 @@
     function multiDomainsPopover(e, id) {
         e.stopPropagation();
         document.getElementById('multi-domains-pop')?.remove();
-        const d = (multiState.domainServers || {})[id] || [];
+        // domains first, subnets after: a long list of subnets hid the domains (owner, 27.10)
+        const isNet = x => /^[0-9.]+(\/\d+)?$|:/.test(x);
+        const d = [...((multiState.domainServers || {})[id] || [])].sort((a, b) => (isNet(a) - isNet(b)) || a.localeCompare(b));
         const r = e.currentTarget.getBoundingClientRect();
         const m = document.createElement('div');
         m.id = 'multi-domains-pop';
