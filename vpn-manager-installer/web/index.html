@@ -710,6 +710,7 @@
                                 <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="on" data-i18n="lt.enable">Switch on</button>
                                 <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="off" data-i18n="lt.disable">Switch off</button>
                                 <span class="lt-bulk-via" id="lt-bulk-via-wrap"><span data-i18n="lt.colVia">Connection</span>: <select id="lt-bulk-via" class="lt-select"></select></span>
+                                <span class="lt-bulk-via"><span data-i18n="lt.colMode">Main server</span>: <select id="lt-bulk-mode" class="lt-select"><option value="">—</option><option value="fallback" data-i18n="lt.mode_fallback">fallback</option><option value="strict" data-i18n="lt.mode_strict">never</option><option value="equal" data-i18n="lt.mode_equal">equal</option></select></span>
                                 <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="delete" id="lt-bulk-delete" data-i18n="lt.deleteOwn">Delete own</button>
                                 <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="reset" data-i18n="lt.reset">Reset to default</button>
                                 <button type="button" class="btn btn-sm btn-secondary" data-lt-bulk="clear" data-i18n="lt.clearSel">Clear selection</button>
@@ -725,6 +726,7 @@
                                         <th data-lt-sort="src"><span data-i18n="lt.colSource">Source</span> <span class="lt-arrow"></span></th>
                                         <th data-lt-sort="on"><span data-i18n="lt.colOn">On</span> <span class="lt-arrow"></span></th>
                                         <th data-lt-sort="via" class="lt-c-via"><span data-i18n="lt.colVia">Connection</span> <span class="lt-arrow"></span></th>
+                                        <th data-lt-sort="mode" class="lt-c-mode"><span data-i18n="lt.colMode">Main server</span> <button type="button" class="lt-help" id="lt-mode-help" aria-label="?">ⓘ</button> <span class="lt-arrow"></span></th>
                                     </tr></thead>
                                     <tbody id="lt-body"></tbody>
                                 </table>
@@ -1223,6 +1225,7 @@
             <div class="modal-body">
                 <p class="section-description" data-i18n="lt.multiDesc">The entry goes through the fastest of the ticked servers.</p>
                 <div id="lt-multi-list" class="ltm-list"></div>
+                <label class="lt-multi-tol"><span data-i18n="lt.tolLabel">Switch to another server of this set when it is faster by</span> <select id="lt-multi-tol" class="lt-select"></select></label>
                 <div class="validation-message" id="lt-multi-msg"></div>
             </div>
             <div class="modal-footer">

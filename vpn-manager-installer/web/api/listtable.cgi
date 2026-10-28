@@ -99,6 +99,14 @@ applying() { [ -d "$APPLY_LOCK" ] && echo true || echo false; }
 rebuild_via() {
     local before="$1"
     (
+        # one rebuild at a time: two at once (the servers of a choice, then its threshold —
+        # one click in the window) read each other's half-written config and both rolled back
+        i=0
+        while ! mkdir /tmp/listtable-via.lock 2>/dev/null; do
+            i=$((i + 1)); [ $i -gt 120 ] && rmdir /tmp/listtable-via.lock 2>/dev/null
+            usleep 250000 2>/dev/null || sleep 1
+        done
+        trap 'rmdir /tmp/listtable-via.lock 2>/dev/null' EXIT
         prev="/tmp/listtable-via.prev.$$"
         cp "$SINGBOX_CONFIG" "$prev" 2>/dev/null
         if [ "$before" != "$(dedicated_ids)" ] && multi_is_on; then
@@ -152,6 +160,9 @@ case "$REQUEST_METHOD" in
         [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && groups=$(jq -c '.groups // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
         [ -n "$via" ] || via='{}'
         [ -n "$groups" ] || groups='{}'
+        modes='{}'; tols='{}'
+        [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && modes=$(jq -c '.mode // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null) && tols=$(jq -c '.tolerance // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
+        [ -n "$modes" ] || modes='{}'; [ -n "$tols" ] || tols='{}'
         # the servers to choose from: the group's own first (in its order), then the rest
         eff=$(multi_effective | jq -c '.ids' 2>/dev/null); [ -n "$eff" ] || eff='[]'
         ded=$(dedicated_ids)
@@ -167,7 +178,7 @@ case "$REQUEST_METHOD" in
             | (map(select(.in_group)) | sort_by(.id as $i | $eff | index($i))) + (map(select(.in_group | not)) | sort_by(.name))')
         [ -n "$servers" ] || servers='[]'
         mode=$(multi_state | jq -r '.mode + ":" + .strategy')
-        json_success "{\"set\":\"$SET\",\"cloud_active\":${auto:-true},\"applying\":$(applying),\"group_mode\":\"$mode\",\"via\":$via,\"groups\":$groups,\"servers\":$servers,\"entries\":$(list_json "$SET")}"
+        json_success "{\"set\":\"$SET\",\"cloud_active\":${auto:-true},\"applying\":$(applying),\"group_mode\":\"$mode\",\"via\":$via,\"groups\":$groups,\"mode\":$modes,\"tolerance\":$tols,\"default_tolerance\":$MULTI_TOLERANCE,\"servers\":$servers,\"entries\":$(list_json "$SET")}"
         ;;
     POST)
         BODY=$(read_post_data)
@@ -278,6 +289,43 @@ case "$REQUEST_METHOD" in
                 "$LO" via "${SERVER:--}" $VALUES >/dev/null 2>&1 || { json_error "Cannot save" 500; exit 0; }
                 log_action "LIST_TABLE" "via ${SERVER:-group}: $(printf '%s\n' "$VALUES" | grep -c .) entr(y/ies)"
                 rebuild_via "$DED"
+                json_success "{\"applying\":true}"
+                ;;
+            mode)
+                # {"values":[..], "mode":"fallback"|"strict"|"equal"} — the main server for entries
+                # with their own connection: a fallback (default), never (B45) or in the race (B46)
+                M=$(printf '%s' "$BODY" | jq -r '.mode // "fallback"')
+                case "$M" in fallback|strict|equal) ;; *) json_error "Invalid mode" 400; exit 0 ;; esac
+                VALS=$(printf '%s' "$BODY" | jq -c '[.values[]? | strings | ltrimstr("*.") | ltrimstr("*") | select(length > 0)]')
+                [ "$VALS" != "[]" ] || { json_error "listtable.errors.empty" 400; exit 0; }
+                OV="$VPN_MANAGER_HOME/list-overrides.json"
+                "$LO" ovlock
+                [ -s "$OV" ] && jq -e 'type == "object"' "$OV" >/dev/null 2>&1 || echo '{"off":[]}' > "$OV"
+                tmp="$OV.tmp.$$"
+                jq --argjson v "$VALS" --arg m "$M" '.mode = ((.mode // {}) | with_entries(select(.key as $k | $v | index($k) | not))
+                                                        + (if $m == "fallback" then {} else ($v | map({key: ., value: $m}) | from_entries) end))' "$OV" > "$tmp" \
+                    && [ -s "$tmp" ] && mv "$tmp" "$OV" || { rm -f "$tmp"; "$LO" ovunlock; json_error "Cannot save" 500; exit 0; }
+                "$LO" ovunlock
+                log_action "LIST_TABLE" "Main server for $(printf '%s' "$VALS" | jq length) entr(y/ies): $M"
+                rebuild_via "$(dedicated_ids)"
+                json_success "{\"applying\":true}"
+                ;;
+            tolerance)
+                # {"server":"<the entries' choice: id, id1,id2 or g:name>", "ms": N | null} — the switch
+                # threshold of that set of servers (B47); null — the common one
+                SRV=$(printf '%s' "$BODY" | jq -r '.server // ""')
+                MS=$(printf '%s' "$BODY" | jq -r '.ms // "" | tostring')
+                [ -n "$SRV" ] || { json_error "listtable.errors.server" 400; exit 0; }
+                case "$MS" in ""|null) MS=null ;; *[!0-9]*) json_error "Invalid value" 400; exit 0 ;; *) [ "$MS" -ge 50 ] && [ "$MS" -le 1000 ] || { json_error "Invalid value" 400; exit 0; } ;; esac
+                OV="$VPN_MANAGER_HOME/list-overrides.json"
+                "$LO" ovlock
+                [ -s "$OV" ] && jq -e 'type == "object"' "$OV" >/dev/null 2>&1 || echo '{"off":[]}' > "$OV"
+                tmp="$OV.tmp.$$"
+                jq --arg s "$SRV" --argjson ms "$MS" '.tolerance = ((.tolerance // {}) | del(.[$s]) + (if $ms == null then {} else {($s): $ms} end))' "$OV" > "$tmp" \
+                    && [ -s "$tmp" ] && mv "$tmp" "$OV" || { rm -f "$tmp"; "$LO" ovunlock; json_error "Cannot save" 500; exit 0; }
+                "$LO" ovunlock
+                log_action "LIST_TABLE" "Switch threshold for a set of servers: $MS"
+                rebuild_via "$(dedicated_ids)"
                 json_success "{\"applying\":true}"
                 ;;
             reserved)

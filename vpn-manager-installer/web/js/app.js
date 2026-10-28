@@ -120,6 +120,15 @@
             'lt.viaGroupFastest': 'Automatic (fastest)',
             'lt.viaGroupSingle': 'Automatic (current server)',
             'lt.viaPick': '— choose —',
+            'lt.colMode': 'Main server',
+            'lt.mode_fallback': 'fallback',
+            'lt.mode_strict': 'never',
+            'lt.mode_equal': 'equal',
+            'lt.modeNeedVia': 'Only for entries with their own connection',
+            'lt.modeHint': 'What the main server (or the fastest, by the mode) does for this entry: fallback — only while the chosen servers are down; never — only the chosen servers; equal — races with them, the fastest wins',
+            'lt.modeHelpHtml': '<b>Main server</b> — the common way out (the main server, or the fastest one in «Fastest» mode) for an entry that has its own connection.<br><br><b>fallback</b> (default) — the entry goes through the chosen servers; while none of them answers — through the main one, then back.<br><br><b>never</b> — only the chosen servers. All of them down — the site does not open. For a fixed address: banks, accounts tied to a country.<br><br><b>equal</b> — the main server races with the chosen ones, the fastest wins. Most speed, the address may change.',
+            'lt.tolLabel': 'Switch to another server of this set when it is faster by',
+            'lt.tolCommon': 'as everywhere ({ms} ms)',
             'lt.viaMulti': 'Several servers (the fastest of them)…',
             'lt.viaAuto': 'Automatic servers',
             'lt.viaUnticked': 'Not ticked on the servers tab',
@@ -1378,6 +1387,15 @@
             'lt.viaGroupFastest': 'Автоматически (самый быстрый)',
             'lt.viaGroupSingle': 'Автоматически (текущий сервер)',
             'lt.viaPick': '— выбрать —',
+            'lt.colMode': 'Главный сервер',
+            'lt.mode_fallback': 'запасной',
+            'lt.mode_strict': 'не использовать',
+            'lt.mode_equal': 'наравне',
+            'lt.modeNeedVia': 'Только для записей со своим подключением',
+            'lt.modeHint': 'Что делает главный сервер (или самый быстрый — по режиму) для этой записи: запасной — только пока выбранные серверы лежат; не использовать — только выбранные; наравне — соревнуется с ними, побеждает самый быстрый',
+            'lt.modeHelpHtml': '<b>Главный сервер</b> — общий выход (главный сервер или самый быстрый в режиме «Самый быстрый») для записи, у которой выбрано своё подключение.<br><br><b>запасной</b> (по умолчанию) — запись идёт через выбранные серверы; пока ни один не отвечает — через главный, потом обратно.<br><br><b>не использовать</b> — только выбранные серверы. Все лежат — сайт не открывается. Для постоянного адреса: банки, аккаунты, привязанные к стране.<br><br><b>наравне</b> — главный соревнуется с выбранными, побеждает самый быстрый. Максимум скорости, адрес может меняться.',
+            'lt.tolLabel': 'Переключаться на другой сервер этого набора, если он быстрее на',
+            'lt.tolCommon': 'как везде ({ms} мс)',
             'lt.viaMulti': 'Несколько серверов (самый быстрый из них)…',
             'lt.viaAuto': 'Автоматические серверы',
             'lt.viaUnticked': 'Не отмечены на вкладке серверов',
@@ -6010,7 +6028,7 @@
 
     async function loadListTable(quiet) {
         const set = state.listSet;
-        if (!quiet) { const b = $('#lt-body'); if (b && !lt.entries.length) b.innerHTML = `<tr><td colspan="7" class="lt-empty">${t('lt.loading')}</td></tr>`; }
+        if (!quiet) { const b = $('#lt-body'); if (b && !lt.entries.length) b.innerHTML = `<tr><td colspan="8" class="lt-empty">${t('lt.loading')}</td></tr>`; }
         try {
             const data = await api('/listtable.cgi?set=' + encodeURIComponent(set));
             if (set !== state.listSet || !data.success) return;
@@ -6021,7 +6039,10 @@
             lt.groups = data.data.groups || {};
             lt.servers = data.data.servers || [];
             lt.groupMode = data.data.group_mode || 'single';
-            lt.entries.forEach(e => { e.via = lt.via[e.v] || ''; });
+            lt.mode = data.data.mode || {};
+            lt.tol = data.data.tolerance || {};
+            lt.defTol = data.data.default_tolerance || 150;
+            lt.entries.forEach(e => { e.via = lt.via[e.v] || ''; e.mode = lt.mode[e.v] || 'fallback'; });
             $('#lt-cloud-note')?.classList.toggle('hidden', data.data.cloud_active !== false);
             ltStatus(data.data.applying ? t('lt.applying') : '');
             if (data.data.applying) ltPoll();
@@ -6061,7 +6082,8 @@
             (!q || e.v.toLowerCase().includes(q) || (e.group || '').toLowerCase().includes(q)));
         const { key, dir } = lt.sort;
         const val = e => key === 'on' ? (e.on ? 1 : 0) : key === 'group' ? (e.group || '\uffff')
-            : key === 'via' ? (e.via ? ltServerName(e.via) : '') : String(e[key] || '');
+            : key === 'via' ? (e.via ? ltServerName(e.via) : '')
+            : key === 'mode' ? (e.via ? ({ strict: 1, fallback: 2, equal: 3 })[e.mode] || 2 : 9) : String(e[key] || '');
         rows.sort((a, b) => {
             const x = val(a), y = val(b);
             return (x < y ? -1 : x > y ? 1 : 0) * dir || (a.v < b.v ? -1 : a.v > b.v ? 1 : 0);
@@ -6133,6 +6155,12 @@
         const auto = lt.servers.filter(s => !s.reserved && s.in_group), rest = lt.servers.filter(s => !s.reserved && !s.in_group), resv = lt.servers.filter(s => s.reserved);
         const part = (title, list) => list.length ? `<div class="ltg-sub">${escapeHtml(title)}</div>${list.map(box).join('')}` : '';
         $('#lt-multi-list').innerHTML = part(t('lt.viaReserved'), resv) + part(t('lt.viaAuto'), auto) + part(t('lt.viaUnticked'), rest);
+        const tsel = $('#lt-multi-tol');
+        if (tsel) {
+            tsel.innerHTML = `<option value="">${escapeHtml(t('lt.tolCommon', { ms: lt.defTol }))}</option>`
+                + Array.from({ length: 20 }, (_, i) => (i + 1) * 50).map(n => `<option value="${n}">${n} ${t('multi.tolAfter')}</option>`).join('');
+            tsel.value = current && lt.tol[current] ? String(lt.tol[current]) : '';
+        }
         const msg = $('#lt-multi-msg'); if (msg) { msg.textContent = t('lt.multiFor', { n: entries.length }); msg.className = 'validation-message'; }
         showModal($('#lt-multi-modal'));
     }
@@ -6140,7 +6168,14 @@
         const ids = [...$$('#lt-multi-list input:checked')].map(i => i.value);
         if (!ids.length) { const m = $('#lt-multi-msg'); if (m) { m.textContent = t('lt.multiNeed'); m.className = 'validation-message error'; } return; }
         hideModal($('#lt-multi-modal'));
-        if (ltMultiTarget) { await ltSetVia(ltMultiTarget, ids.sort().join(',')); if (ltMultiTarget.length > 1) ltClearSel(); }
+        const server = ids.sort().join(',');
+        const ms = $('#lt-multi-tol')?.value || '';
+        if (ltMultiTarget) { await ltSetVia(ltMultiTarget, server); if (ltMultiTarget.length > 1) ltClearSel(); }
+        // the set's own switch threshold (B47); empty — the common one
+        if ((lt.tol[server] || '') !== (ms ? parseInt(ms, 10) : '')) {
+            if (ms) lt.tol[server] = parseInt(ms, 10); else delete lt.tol[server];
+            try { await ltPost('tolerance', { server, ms: ms ? parseInt(ms, 10) : null }); } catch (e) { ltErr(e); }
+        }
         ltMultiTarget = null;
     }
 
@@ -6170,7 +6205,7 @@
             a.textContent = lt.sort.key === k ? (lt.sort.dir > 0 ? '▲' : '▼') : '';
         });
         if (!rows.length) {
-            body.innerHTML = `<tr><td colspan="7" class="lt-empty">${t('lt.empty')}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="8" class="lt-empty">${t('lt.empty')}</td></tr>`;
             ltBulkUI();
             return;
         }
@@ -6187,6 +6222,9 @@
                 <td><button type="button" class="lt-sw ${e.on ? 'on' : ''}" aria-pressed="${e.on}"></button></td>
                 <td class="lt-c-via">${!ltViaAllowed() ? `<span class="lt-na">${t('lt.viaNa')}</span>`
                     : `<select class="lt-select lt-via" data-via="${escapeHtml(e.via)}" ${e.on ? '' : 'disabled'}><option selected>${escapeHtml(e.via ? (ltViaKnown(e.via) ? ltServerName(e.via) : t('lt.viaGone')) : ltGroupLabel())}</option></select>`}</td>
+                <td class="lt-c-mode">${!ltViaAllowed() || !e.via ? '<span class="lt-na">—</span>'
+                    : `<select class="lt-select lt-mode lt-mode-${e.mode}" ${e.on ? '' : 'disabled'} title="${escapeHtml(t('lt.modeHint'))}">
+                        ${['fallback', 'strict', 'equal'].map(m => `<option value="${m}"${e.mode === m ? ' selected' : ''}>${escapeHtml(t('lt.mode_' + m))}</option>`).join('')}</select>`}</td>
             </tr>`;
         };
         // lt.order is the order on screen: Shift+click selects what the eye sees between
@@ -6207,7 +6245,7 @@
                 const items = groups.get(g);
                 const all = items.every(e => lt.sel.has(ltKey(e)));
                 html += `<tr class="lt-grp" data-g="${escapeHtml(g)}"><td><input type="checkbox" class="lt-gcb" ${all ? 'checked' : ''}></td>
-                    <td colspan="6">${escapeHtml(g)}<span class="lt-cnt">${t('lt.entries', { n: items.length })}</span></td></tr>`;
+                    <td colspan="7">${escapeHtml(g)}<span class="lt-cnt">${t('lt.entries', { n: items.length })}</span></td></tr>`;
                 html += items.map(put).join('');
             }
         } else {
@@ -6307,6 +6345,31 @@
         try { await ltPost('via', { values, server }); } catch (e) { ltErr(e); loadListTable(true); }
     }
 
+    // «Главный сервер» for entries with their own connection: fallback / strict / equal
+    async function ltSetMode(entries, mode) {
+        const own = entries.filter(e => e.via);
+        const values = [...new Set(own.map(e => e.v))];
+        if (!values.length) { ltStatus(t('lt.modeNeedVia'), true); return; }
+        own.forEach(e => { e.mode = mode; if (mode === 'fallback') delete lt.mode[e.v]; else lt.mode[e.v] = mode; });
+        renderListTable();
+        try { await ltPost('mode', { values, mode }); } catch (e) { ltErr(e); loadListTable(true); }
+    }
+
+    // the column hint: what the three choices mean (a tap on ⓘ, the title on hover)
+    function ltModeHelp(ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        document.getElementById('lt-mode-pop')?.remove();
+        const r = ev.currentTarget.getBoundingClientRect();
+        const m = document.createElement('div');
+        m.id = 'lt-mode-pop';
+        m.className = 'multi-limit-menu lt-mode-pop';
+        m.style.top = (window.scrollY + r.bottom + 6) + 'px';
+        m.style.left = (window.scrollX + Math.max(8, Math.min(r.left - 200, window.innerWidth - 340))) + 'px';
+        m.innerHTML = t('lt.modeHelpHtml');
+        document.body.appendChild(m);
+        setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+    }
+
     async function ltSwitch(entries, on) {
         const values = [...new Set(entries.map(e => e.v))];
         if (!values.length) return;
@@ -6374,12 +6437,23 @@
         body.addEventListener('mousedown', e => fillVia(e.target));
         body.addEventListener('touchstart', e => fillVia(e.target), { passive: true });
         body.addEventListener('change', e => {
+            if (e.target.classList.contains('lt-mode')) {
+                const entry = lt.entries.find(x => ltKey(x) === e.target.closest('tr')?.dataset.k);
+                if (entry) ltSetMode([entry], e.target.value);
+                return;
+            }
             if (!e.target.classList.contains('lt-via')) return;
             const tr = e.target.closest('tr');
             const entry = lt.entries.find(x => ltKey(x) === tr?.dataset.k);
             if (e.target.value === '__multi') { e.target.value = entry?.via || ''; if (entry) ltOpenMulti([entry], entry.via); return; }
             if (entry) ltSetVia([entry], e.target.value);
         });
+        $('#lt-bulk-mode')?.addEventListener('change', e => {
+            if (!e.target.value) return;
+            const v = e.target.value; e.target.value = '';
+            ltSetMode(ltSelected(), v).then(ltClearSel);
+        });
+        $('#lt-mode-help')?.addEventListener('click', ltModeHelp);
         $('#lt-bulk-via')?.addEventListener('change', e => {
             if (e.target.value === '__pick') return;
             if (e.target.value === '__multi') { e.target.value = '__pick'; ltOpenMulti(ltSelected()); return; }

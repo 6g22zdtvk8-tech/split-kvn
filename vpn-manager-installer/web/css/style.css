@@ -5095,3 +5095,11 @@ select.lt-select { width: auto; flex: 0 0 auto; padding: 0.35rem 0.5rem; backgro
 .multi-row-sub .multi-domains { margin-left: 0; }
 .config-role-sep .role-sep-hint { display: block; margin-top: 0.2rem; text-transform: none; letter-spacing: 0; font-size: 0.75rem; color: var(--text-secondary); text-decoration: none; }
 .config-role-sep .role-sep-hint:hover { color: var(--accent-primary); text-decoration: underline; }
+/* B45/B46: the «Main server» column and its help */
+.lt-help { border: none; background: transparent; color: var(--text-secondary); cursor: pointer; padding: 0 0.15rem; font-size: 0.85rem; }
+.lt-help:hover { color: var(--accent-primary); }
+.lt-mode-pop { max-width: 22rem; display: block; font-size: 0.8rem; line-height: 1.4; color: var(--text-primary); padding: 0.7rem 0.8rem; }
+.lt-select.lt-mode-strict { color: #f0b429; border-color: rgba(240, 180, 41, 0.6); }
+.lt-select.lt-mode-equal { color: var(--accent-primary); border-color: var(--accent-primary); }
+.lt-multi-tol { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.6rem 0 0.2rem; font-size: 0.85rem; color: var(--text-secondary); }
+.lt-multi-tol select { width: auto; }

@@ -2669,7 +2669,9 @@ apply_via_rules() {
                                                groups: (((.groups // {}) | with_entries(select((.value | type) == "array")))
                                                         + (reduce $sets[] as $x ({}; . + {("~" + $x): ($x | split(","))}))),
                                                off: [(.off // [])[] | strings],
-                                               reserved: [(.reserved // [])[] | strings]}' "$LIST_OVERRIDES" 2>/dev/null)
+                                               reserved: [(.reserved // [])[] | strings],
+                                               mode: ((.mode // {}) | with_entries(select(.value == "strict" or .value == "equal"))),
+                                               tolerance: ((.tolerance // {}) | with_entries(select(.value | type == "number")))}' "$LIST_OVERRIDES" 2>/dev/null)
     [ -n "$ov" ] || ov='{}'
     # dedicated groups in use get a short tag by name order: g1, g2…
     local gmap
@@ -2703,7 +2705,7 @@ apply_via_rules() {
     done
     local tmp="/tmp/singbox_via.$$.json"
     jq --argjson ov "$ov" --argjson gm "$gmap" --argjson items "$items" --argjson have "$have" --arg single "$single" --argjson tol "$MULTI_TOLERANCE" '
-        def isvia: (.tag // "") | (startswith("x-") or startswith("via-") or startswith("vg-"));
+        def isvia: (.tag // "") | (startswith("x-") or startswith("via-") or startswith("vg-") or startswith("vge-"));
         # the router jq has no regex: a subnet is digits, dots and a slash, or has a colon
         def isnet: contains(":") or (explode | all(. == 46 or . == 47 or (. >= 48 and . <= 57)));
         def bare: ltrimstr("*.") | ltrimstr("*");
@@ -2718,26 +2720,47 @@ apply_via_rules() {
             | {name: .key, tag: $gm[.key], members: [.value[] | select(. as $m | $tagof | has($m))]} | select(.members | length > 0)]) as $groups
         # the outbound an entry goes to: via-<id> (one server) or via-<g> (dedicated group);
         # an entry switched off is not in the lists, so it has no way of its own either
+        # the main server for an entry with its own connection (column «Главный сервер»):
+        #   fallback (default) — via-<t>   selector [own, vpn], multi-health.sh moves it to vpn
+        #                                  while own does not answer
+        #   strict             — via-s-<t> selector [own]: only the chosen servers, never vpn (B45)
+        #   equal              — via-e-<t> selector [vge-<t>]: urltest of the chosen servers and
+        #                                  vpn together, the fastest wins (B46)
+        | ([$groups[].tag]) as $gtags
         | ([($ov.via // {}) | to_entries[] | select(.key | bare | . as $k | $off | index($k) | not)
+            | (($ov.mode // {})[.key | bare] // ($ov.mode // {})[.key] // "fallback") as $m
+            | (if $m == "strict" then "via-s-" elif $m == "equal" then "via-e-" else "via-" end) as $pre
             | (if (.value | startswith("g:")) then (.value | ltrimstr("g:")) as $n | ([$groups[] | select(.name == $n) | .tag] | first) as $t
-                  | (if $t then {entry: (.key | bare), out: ("via-" + $t)} else empty end)
-               elif (.value as $v | $tagof | has($v)) then {entry: (.key | bare), out: ("via-" + .value)}
+                  | (if $t then {entry: (.key | bare), out: ($pre + $t)} else empty end)
+               elif (.value as $v | $tagof | has($v)) then {entry: (.key | bare), out: ($pre + .value)}
                else empty end)]
            | group_by(.out) | map({out: .[0].out, list: (map(.entry) | unique)})) as $per
-        | ([$per[].out | ltrimstr("via-")]) as $used
+        | ([$per[].out]) as $outs
+        # the switch threshold of a set (B47): set in the panel per choice, else the common one
+        | (reduce $groups[] as $g ({}; . + {($g.tag): ($g.name | if startswith("~") then ltrimstr("~") else "g:" + . end)})) as $gkey
+        | def tolof($t): (($ov.tolerance // {})[$gkey[$t] // $t] // $tol);
+          def tpart: if startswith("via-s-") then ltrimstr("via-s-") elif startswith("via-e-") then ltrimstr("via-e-") else ltrimstr("via-") end;
+          def own($t): if ($gtags | index($t)) then "vg-" + $t else $tagof[$t] end;
+          ([$outs[] | select(startswith("via-e-") | not) | tpart | select(. as $t | $gtags | index($t))] | unique) as $vgused
         | ([(.inbounds // [])[].tag] | map(select(. == "tun-in" or startswith("ss-server-") or (startswith("policy-") and . != "policy-direct-in")))) as $ins
         | .endpoints = ([(.endpoints // [])[] | select(isvia | not)] + [$items[] | select(.type == "wireguard")])
         | (if (.endpoints | length) == 0 then del(.endpoints) else . end)
         | .outbounds = ([(.outbounds // [])[] | select(isvia | not)]
                         + [$items[] | select(.type != "wireguard")]
                         # a dedicated group: the fastest of its servers, re-checked every minute
-                        + [$groups[] | select(.tag as $t | $used | index($t)) | {type: "urltest", tag: ("vg-" + .tag), outbounds: [.members[] | $tagof[.]],
-                            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: $tol, idle_timeout: "30m"}]
-                        # the entry way: the server (or the group) first; multi-health.sh switches
-                        # it to the shared group while that does not answer
-                        + [$used[] | . as $u | if startswith("g") and ($tagof | has($u) | not)
-                                     then {type: "selector", tag: ("via-" + .), outbounds: ["vg-" + ., $group], default: ("vg-" + .)}
-                                     else {type: "selector", tag: ("via-" + .), outbounds: (if $tagof[$u] == $group then [$group] else [$tagof[$u], $group] end), default: $tagof[$u]} end])
+                        + [$groups[] | select(.tag as $t | $vgused | index($t)) | {type: "urltest", tag: ("vg-" + .tag), outbounds: [.members[] | $tagof[.]],
+                            url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: tolof(.tag), idle_timeout: "30m"}]
+                        # "equal": the chosen servers and the main way in one race
+                        + [$outs[] | select(startswith("via-e-")) | tpart as $t
+                           | {type: "urltest", tag: ("vge-" + $t),
+                              outbounds: ((if ($gtags | index($t)) then [$groups[] | select(.tag == $t) | .members[] | $tagof[.]] else [$tagof[$t]] end) + [$group] | unique),
+                              url: "https://www.gstatic.com/generate_204", interval: "1m", tolerance: tolof($t), idle_timeout: "30m"}]
+                        # the entry way. fallback: own first, multi-health.sh switches it to the
+                        # shared group while own does not answer; strict: own only; equal: the race
+                        + [$outs[] | tpart as $t
+                           | if startswith("via-s-") then {type: "selector", tag: ., outbounds: [own($t)], default: own($t)}
+                             elif startswith("via-e-") then {type: "selector", tag: ., outbounds: ["vge-" + $t], default: ("vge-" + $t)}
+                             else {type: "selector", tag: ., outbounds: (if own($t) == $group then [$group] else [own($t), $group] end), default: own($t)} end])
         | .route.rules = (
             [(.route.rules // [])[] | select(((.outbound // "") | startswith("via-") | not) and (.inbound != ["tun-in"] or .action != "sniff"))] as $rest
             # after the last sniff of an inbound the rules cover: the device policies sniff
