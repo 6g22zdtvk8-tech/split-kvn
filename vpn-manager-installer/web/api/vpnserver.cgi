@@ -66,6 +66,20 @@ migrate_from_shadowsocks() {
     fi
 }
 
+# Credentials written before B37 carry "tls": false. B37 keeps its TLS settings in a
+# .tls object and jq fails on the boolean, so the Reality/TLS inbounds never appeared.
+drop_legacy_tls_flag() {
+    [ -f "$VPN_SERVER_CREDS" ] || return 0
+    jq -e '.tls | type == "boolean"' "$VPN_SERVER_CREDS" >/dev/null 2>&1 || return 0
+    local tmp=$(mktemp)
+    if jq 'del(.tls)' "$VPN_SERVER_CREDS" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv "$tmp" "$VPN_SERVER_CREDS"
+        chmod 600 "$VPN_SERVER_CREDS"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # =============================================================================
 # Key generation
 # =============================================================================
@@ -198,7 +212,6 @@ setup_vless_credentials() {
   "server_port": $VPN_SERVER_PORT,
   "transport": "ws",
   "ws_path": "/vless-ws",
-  "tls": false,
   "users": [
     {
       "name": "default",
@@ -1250,6 +1263,8 @@ change_server_port() {
 PATH_INFO="${PATH_INFO:-}"
 ACTION=$(echo "$PATH_INFO" | cut -d'/' -f2)
 PARAM=$(echo "$PATH_INFO" | cut -d'/' -f3)
+
+drop_legacy_tls_flag
 
 case "$REQUEST_METHOD" in
     GET)

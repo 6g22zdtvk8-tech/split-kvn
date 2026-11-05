@@ -778,7 +778,6 @@ multi_members_of_subscription() {
 
 # After a refresh: a ticked server whose file is gone is replaced by the server of the
 # same subscription with the same name, address and port (then the same name alone).
-# Without this the group silently shrinks every time a provider reshuffles ids.
 multi_follow_members() {
     local sub="$1" before="$2"
     [ -n "$before" ] && [ "$before" != "[]" ] || return 0
@@ -2257,9 +2256,10 @@ vpn_lan_rebuild() {
 }
 
 # A sing-box config with every B8 rule and outbound removed — the same as with access
-# off (install-singbox.sh does the same on a reinstall)
+# off (install-singbox.sh does the same on a reinstall). B8 rejects are by address
+# (ip_cidr); the QUIC reject of the VPN server is not B8 and stays
 vpn_lan_strip() {
-    jq -e '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"] or .inbound == ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"]) and .action == "reject")) | not)]
+    jq -e '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"] or .inbound == ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"]) and .action == "reject" and has("ip_cidr"))) | not)]
            | .outbounds = [(.outbounds // [])[] | select((.tag // "") | startswith("direct-lan-") | not)]' "$1"
 }
 
@@ -2566,9 +2566,27 @@ device_policy_rules_json() {
 generate_vpnclient_route_rules() {
     local rules=$(generate_policy_route_rules "$1" "$2" ss-server-in)
 
+    # QUIC from VPN-server clients is refused (Denis, 28.10). Inside the tunnel (VLESS over
+    # WS/TLS/xhttp is TCP) it rides as UDP over TCP: a lost packet stalls both, and YouTube
+    # crawled at ~2.5 Mbit/s on a phone while the router had ~100. Apps fall back to HTTPS
+    # over TCP at once. By the sniffed protocol, not by port: WhatsApp calls also use UDP
+    # 443 and are not QUIC. apply_via_rules lifts it above the per-entry rules.
+    # settings.json "vpnserver_block_quic": false lets QUIC through again
+    local quic='[{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"protocol":"quic","action":"reject"}]'
+    jq -e '.vpnserver_block_quic == false' "$SETTINGS_FILE" >/dev/null 2>&1 && quic='[]'
+
+    # VPN-server clients send a name, not an address (VLESS carries the domain). sing-box
+    # matches ip_cidr only against an address, so without a resolve step the subnet lists
+    # never matched them. Home devices are not affected: they come with an address. Resolve
+    # keeps the sniffed name, so the domain rules still match. Goes after the QUIC reject
+    # (no lookup for a refused connection); apply_via_rules lifts it with that reject.
+    # settings.json "vpnserver_resolve": false turns it off
+    local resolve='[{"inbound":["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"],"action":"resolve"}]'
+    jq -e '.vpnserver_resolve == false' "$SETTINGS_FILE" >/dev/null 2>&1 && resolve='[]'
+
     # B8 rules go first: they take private addresses only, the policy keeps the rest.
     # If they cannot be built the policy rules go out alone, as before.
-    local merged=$(printf '%s' "$rules" | jq -c --argjson lan "$(vpn_lan_rules_json)" '$lan + .' 2>/dev/null)
+    local merged=$(printf '%s' "$rules" | jq -c --argjson lan "$(vpn_lan_rules_json)" --argjson quic "$quic" --argjson resolve "$resolve" '$lan + $quic + $resolve + .' 2>/dev/null)
     if [ -n "$merged" ]; then
         echo "$merged"
     else
@@ -2762,13 +2780,20 @@ apply_via_rules() {
                              elif startswith("via-e-") then {type: "selector", tag: ., outbounds: ["vge-" + $t], default: ("vge-" + $t)}
                              else {type: "selector", tag: ., outbounds: (if own($t) == $group then [$group] else [own($t), $group] end), default: own($t)} end])
         | .route.rules = (
-            [(.route.rules // [])[] | select(((.outbound // "") | startswith("via-") | not) and (.inbound != ["tun-in"] or .action != "sniff"))] as $rest
+            [(.route.rules // [])[] | select(((.outbound // "") | startswith("via-") | not) and (.inbound != ["tun-in"] or .action != "sniff"))] as $all
+            # the QUIC reject of the VPN server must come before the per-entry rules, or QUIC to a
+            # domain with its own connection (YouTube) would slip past it
+            | [$all[] | select((.action == "reject" and .protocol == "quic")
+                               or (.action == "resolve" and ((.inbound // []) | index("ss-server-in"))))] as $quicr
+            | [$all[] | select(((.action == "reject" and .protocol == "quic")
+                                or (.action == "resolve" and ((.inbound // []) | index("ss-server-in")))) | not)] as $rest
             # after the last sniff of an inbound the rules cover: the device policies sniff
             # further down than home devices and the VPN server
             | ([$rest | to_entries[] | select(.value.action == "sniff" and ((.value.inbound // []) | any(. as $i | $ins | index($i)))) | .key] | max) as $last
             | (if $last == null then ($rest | map(.action == "sniff") | index(false) // ($rest | length)) else $last + 1 end) as $cut
             | (if ($per | length) > 0 then [{inbound: ["tun-in"], action: "sniff"}] else [] end)
               + $rest[:$cut]
+              + $quicr
               + [$per[] | .out as $o
                   | ([.list[] | select(isnet | not)]) as $doms
                   | ([.list[] | select(isnet)]) as $nets

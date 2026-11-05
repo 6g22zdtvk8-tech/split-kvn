@@ -443,7 +443,6 @@ setup_vpnserver() {
   "server_port": $VPN_SERVER_PORT,
   "transport": "ws",
   "ws_path": "/vless-ws",
-  "tls": false,
   "users": [
     {
       "name": "default",
@@ -1677,7 +1676,7 @@ EOF
     # ...and the existing sing-box config may still carry the B8 rules: with no password
     # they must go now, not at the first rebuild (the same config as with access off)
     if [ -s "$SINGBOX_CONFIG" ] && command -v jq >/dev/null 2>&1; then
-        if jq '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"] or .inbound == ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"]) and .action == "reject")) | not)]
+        if jq '.route.rules = [(.route.rules // [])[] | select((((.outbound // "") | startswith("direct-lan-")) or ((.inbound == ["ss-server-in"] or .inbound == ["ss-server-in","ss-server-reality-in"] or .inbound == ["ss-server-in","ss-server-reality-in","ss-server-tls-in","ss-server-xhttp-in"]) and .action == "reject" and has("ip_cidr"))) | not)]
                | .outbounds = [(.outbounds // [])[] | select((.tag // "") | startswith("direct-lan-") | not)]' \
                "$SINGBOX_CONFIG" > "$SINGBOX_CONFIG.b8" 2>/dev/null && [ -s "$SINGBOX_CONFIG.b8" ] && jq empty "$SINGBOX_CONFIG.b8" 2>/dev/null; then
             cmp -s "$SINGBOX_CONFIG.b8" "$SINGBOX_CONFIG" || cat "$SINGBOX_CONFIG.b8" > "$SINGBOX_CONFIG"
