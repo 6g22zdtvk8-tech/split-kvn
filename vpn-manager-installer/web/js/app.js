@@ -64,7 +64,7 @@
             'subtab.subnetsUdp': 'Subnets UDP',
             'subtab.dnsPinned': 'DNS via Google',
             'subtab.listTable': "Table",
-            'lt.search': "Search: domain, subnet, group…",
+            'lt.search': "Search: domain, subnet, group, comment…",
             'lt.all': "All",
             'lt.domains': "Domains",
             'lt.subnets': "Subnets",
@@ -78,6 +78,10 @@
             'lt.add': "+ Add",
             'lt.addOpen': '+ Add a domain or subnet',
             'lt.addLabel': 'New own entry:',
+            'lt.notePlaceholder': 'Comment: why this rule (optional)',
+            'lt.noteAdd': '+ comment',
+            'lt.noteEdit': 'Comment — why this rule was added (empty — remove):',
+            'lt.noteHint': 'Click to change the comment',
             'lt.addDo': 'Add',
             'lt.addCancel': 'Cancel',
             'lt.enable': "Switch on",
@@ -1331,7 +1335,7 @@
             'subtab.subnetsUdp': 'Подсети UDP',
             'subtab.dnsPinned': 'DNS через Google',
             'subtab.listTable': "Таблица",
-            'lt.search': "Поиск: домен, подсеть, группа…",
+            'lt.search': "Поиск: домен, подсеть, группа, комментарий…",
             'lt.all': "Все",
             'lt.domains': "Домены",
             'lt.subnets': "Подсети",
@@ -1345,6 +1349,10 @@
             'lt.add': "+ Добавить",
             'lt.addOpen': '+ Добавить домен или подсеть',
             'lt.addLabel': 'Новая своя запись:',
+            'lt.notePlaceholder': 'Комментарий: зачем это правило (необязательно)',
+            'lt.noteAdd': '+ комментарий',
+            'lt.noteEdit': 'Комментарий — зачем добавлено это правило (пусто — удалить):',
+            'lt.noteHint': 'Нажмите, чтобы изменить комментарий',
             'lt.addDo': 'Добавить',
             'lt.addCancel': 'Отмена',
             'lt.enable': "Включить",
@@ -6040,9 +6048,10 @@
             lt.servers = data.data.servers || [];
             lt.groupMode = data.data.group_mode || 'single';
             lt.mode = data.data.mode || {};
+            lt.notes = data.data.notes || {};
             lt.tol = data.data.tolerance || {};
             lt.defTol = data.data.default_tolerance || 150;
-            lt.entries.forEach(e => { e.via = lt.via[e.v] || ''; e.mode = lt.mode[e.v] || 'fallback'; });
+            lt.entries.forEach(e => { e.via = lt.via[e.v] || ''; e.mode = lt.mode[e.v] || 'fallback'; e.note = lt.notes[e.v] || ''; });
             $('#lt-cloud-note')?.classList.toggle('hidden', data.data.cloud_active !== false);
             ltStatus(data.data.applying ? t('lt.applying') : '');
             if (data.data.applying) ltPoll();
@@ -6079,10 +6088,10 @@
             (!lt.src || e.src === lt.src || e.src === 'both') &&
             (!lt.offOnly || !e.on) &&
             (!lt.changedOnly || ltChanged(e)) &&
-            (!q || e.v.toLowerCase().includes(q) || (e.group || '').toLowerCase().includes(q)));
+            (!q || e.v.toLowerCase().includes(q) || (e.group || '').toLowerCase().includes(q) || (e.note || '').toLowerCase().includes(q)));
         const { key, dir } = lt.sort;
         const val = e => key === 'on' ? (e.on ? 1 : 0) : key === 'group' ? (e.group || '\uffff')
-            : key === 'via' ? (e.via ? ltServerName(e.via) : '')
+            : key === 'via' ? (e.via ? ltServerName(e.via) : '\uffff')
             : key === 'mode' ? (e.via ? ({ strict: 1, fallback: 2, equal: 3 })[e.mode] || 2 : 9) : String(e[key] || '');
         rows.sort((a, b) => {
             const x = val(a), y = val(b);
@@ -6215,7 +6224,9 @@
             const sel = lt.sel.has(k);
             return `<tr class="${sel ? 'lt-sel' : ''} ${e.on ? '' : 'lt-off'} ${ltChanged(e) ? 'lt-changed' : ''}" data-k="${escapeHtml(k)}" data-i="${i}">
                 <td><input type="checkbox" class="lt-cb" ${sel ? 'checked' : ''}></td>
-                <td class="lt-v">${escapeHtml(e.v)}</td>
+                <td class="lt-v">${escapeHtml(e.v)}${e.src === 'cloud' ? ''
+                    : e.note ? `<div class="lt-entry-note" title="${escapeHtml(t('lt.noteHint'))}">${escapeHtml(e.note)}</div>`
+                    : `<button type="button" class="lt-note-add">${t('lt.noteAdd')}</button>`}</td>
                 <td>${escapeHtml(e.group || '—')}</td>
                 <td>${e.kind === 'subnet' ? t('lt.subnet') : t('lt.domain')}${e.proto === 'udp' ? ' · ' + t('lt.udp') : ''}</td>
                 <td><span class="lt-tag ${e.src}">${srcLabel(e.src)}</span></td>
@@ -6378,6 +6389,20 @@
         try { await ltPost('set', { values, on }); } catch (e) { ltErr(e); loadListTable(true); }
     }
 
+    // a comment on an own entry: why it was added (only for the owner, the router does not use it)
+    async function ltEditNote(entry) {
+        const v = prompt(t('lt.noteEdit'), entry.note || '');
+        if (v === null) return;
+        const note = v.replace(/\s+/g, ' ').trim().slice(0, 200);
+        if (note === (entry.note || '')) return;
+        try {
+            const data = await ltPost('note', { values: [entry.v], note });
+            lt.notes = (data.data && data.data.notes) || {};
+            lt.entries.forEach(e => { e.note = lt.notes[e.v] || ''; });
+            renderListTable();
+        } catch (e) { ltErr(e); }
+    }
+
     function initListTable() {
         const body = $('#lt-body');
         if (!body || body.dataset.ready) return;
@@ -6388,9 +6413,13 @@
         $('#lt-chips [data-lt-off]')?.addEventListener('click', () => { lt.offOnly = !lt.offOnly; renderListTable(); });
         $('#lt-chips [data-lt-changed]')?.addEventListener('click', () => { lt.changedOnly = !lt.changedOnly; renderListTable(); });
         $('#lt-group-toggle')?.addEventListener('click', () => { lt.grouped = !lt.grouped; renderListTable(); });
-        $$('.lt-table th[data-lt-sort]').forEach(th => th.addEventListener('click', () => {
+        $$('.lt-table th[data-lt-sort]').forEach(th => th.addEventListener('click', ev => {
+            if (ev.target.closest('.lt-help')) return;    // the help button in a header explains, does not sort
             const k = th.dataset.ltSort;
             lt.sort = { key: k, dir: lt.sort.key === k ? -lt.sort.dir : 1 };
+            // grouped, rows sort only inside their group and the order looks unchanged:
+            // a sort by any column but the group shows one flat list ("By groups" brings them back)
+            if (k !== 'group') lt.grouped = false;
             renderListTable();
         }));
         $('#lt-sel-all')?.addEventListener('change', e => {
@@ -6413,6 +6442,7 @@
             const entry = lt.entries.find(x => ltKey(x) === k);
             if (!entry) return;
             if (e.target.classList.contains('lt-sw')) { ltSwitch([entry], !entry.on); return; }
+            if (e.target.closest('.lt-entry-note, .lt-note-add')) { ltEditNote(entry); return; }
             if (e.target.classList.contains('lt-via')) return;
             if (!e.target.classList.contains('lt-cb')) return;
             const idx = parseInt(tr.dataset.i, 10);
@@ -6498,7 +6528,8 @@
             const values = (input?.value || '').split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
             if (!values.length) return;
             try {
-                const data = await ltPost('add', { values, proto: $('#lt-add-proto')?.value || 'tcpudp' });
+                const note = ($('#lt-add-note')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+                const data = await ltPost('add', { values, proto: $('#lt-add-proto')?.value || 'tcpudp', note });
                 const r = data.data || {};
                 const added = r.added || values, exists = r.exists || [], invalid = r.invalid || [];
                 const parts = [];
@@ -6515,11 +6546,12 @@
             $('#lt-add-form')?.classList.toggle('hidden', !open);
             $('#lt-add-open')?.classList.toggle('hidden', open);
             if (open) $('#lt-add-value')?.focus();
-            else { const i = $('#lt-add-value'); if (i) i.value = ''; }
+            else { const i = $('#lt-add-value'); if (i) i.value = ''; const n = $('#lt-add-note'); if (n) n.value = ''; }
         };
         $('#lt-add-open')?.addEventListener('click', () => addForm(true));
         $('#lt-add-cancel')?.addEventListener('click', () => { addForm(false); ltStatus(''); });
         $('#lt-add-btn')?.addEventListener('click', add);
+        $('#lt-add-note')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add(); } });
         // Enter adds, Shift+Enter starts a new line
         $('#lt-add-value')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add(); } });
     }

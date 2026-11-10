@@ -6,6 +6,8 @@
 #   POST /api/listtable.cgi/set     {"set":"world","values":[..],"on":false}  switch on/off
 #   POST /api/listtable.cgi/add     {"set":"world","values":["x","10.0.0.0/8"],"proto":"tcpudp"}
 #   POST /api/listtable.cgi/delete  {"set":"world","values":[..]}  own entries only
+#   POST /api/listtable.cgi/note    {"values":[..],"note":"why"}  a comment on own entries
+#        ("" removes it); "add" takes the same "note". Kept in list-overrides.json "notes"
 # Switching never edits the cloud lists: list-overrides.sh keeps the change aside, so the
 # list files keep their format and an older Split-KVN still reads them (see that script).
 # Applying (dnsmasq, ipsets, sing-box) runs in the background, the answer comes at once.
@@ -92,6 +94,23 @@ apply_bg() {
 
 applying() { [ -d "$APPLY_LOCK" ] && echo true || echo false; }
 
+# the comment of entries: notes_set '<json array of values>' '<text>' ("" — remove).
+# One line, at most 200 characters; nothing is applied (dnsmasq, sing-box do not see it).
+# The router's jq has no regex: line breaks go by split/join
+notes_set() {
+    local OV="$VPN_MANAGER_HOME/list-overrides.json" tmp
+    "$LO" ovlock
+    [ -s "$OV" ] && jq -e 'type == "object"' "$OV" >/dev/null 2>&1 || echo '{"off":[]}' > "$OV"
+    tmp="$OV.tmp.$$"
+    jq --argjson v "$1" --arg n "$2" '($n | split("\r") | join(" ") | split("\n") | join(" ") | split("\t") | join(" ")
+                 | until(startswith(" ") | not; ltrimstr(" ")) | until(endswith(" ") | not; rtrimstr(" ")) | .[0:200]) as $t
+        | .notes = ((.notes // {}) | with_entries(select(.key as $k | $v | index($k) | not))
+                    + (if $t == "" then {} else ($v | map({key: ., value: $t}) | from_entries) end))
+        | if .notes == {} then del(.notes) else . end' "$OV" > "$tmp" \
+        && [ -s "$tmp" ] && mv "$tmp" "$OV" || { rm -f "$tmp"; "$LO" ovunlock; return 1; }
+    "$LO" ovunlock
+}
+
 # sing-box after a change of "via" or of the dedicated groups, in the background: the
 # entry rules and server connections; when the set of dedicated servers changed, the
 # shared group too (they leave or rejoin it). Restart (2–3 s) only when the config changed;
@@ -160,6 +179,9 @@ case "$REQUEST_METHOD" in
         [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && groups=$(jq -c '.groups // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
         [ -n "$via" ] || via='{}'
         [ -n "$groups" ] || groups='{}'
+        notes='{}'
+        [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && notes=$(jq -c '.notes // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
+        [ -n "$notes" ] || notes='{}'
         modes='{}'; tols='{}'
         [ -s "$VPN_MANAGER_HOME/list-overrides.json" ] && modes=$(jq -c '.mode // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null) && tols=$(jq -c '.tolerance // {}' "$VPN_MANAGER_HOME/list-overrides.json" 2>/dev/null)
         [ -n "$modes" ] || modes='{}'; [ -n "$tols" ] || tols='{}'
@@ -178,7 +200,7 @@ case "$REQUEST_METHOD" in
             | (map(select(.in_group)) | sort_by(.id as $i | $eff | index($i))) + (map(select(.in_group | not)) | sort_by(.name))')
         [ -n "$servers" ] || servers='[]'
         mode=$(multi_state | jq -r '.mode + ":" + .strategy')
-        json_success "{\"set\":\"$SET\",\"cloud_active\":${auto:-true},\"applying\":$(applying),\"group_mode\":\"$mode\",\"via\":$via,\"groups\":$groups,\"mode\":$modes,\"tolerance\":$tols,\"default_tolerance\":$MULTI_TOLERANCE,\"servers\":$servers,\"entries\":$(list_json "$SET")}"
+        json_success "{\"set\":\"$SET\",\"cloud_active\":${auto:-true},\"applying\":$(applying),\"group_mode\":\"$mode\",\"via\":$via,\"groups\":$groups,\"mode\":$modes,\"notes\":$notes,\"tolerance\":$tols,\"default_tolerance\":$MULTI_TOLERANCE,\"servers\":$servers,\"entries\":$(list_json "$SET")}"
         ;;
     POST)
         BODY=$(read_post_data)
@@ -228,6 +250,8 @@ case "$REQUEST_METHOD" in
                 if [ -n "$ADDED" ]; then
                     # shellcheck disable=SC2086
                     "$LO" set on $ADDED >/dev/null 2>&1
+                    NOTE=$(printf '%s' "$BODY" | jq -r '.note // "" | strings')
+                    [ -n "$NOTE" ] && notes_set "$(js "$ADDED")" "$NOTE"
                     log_action "LIST_TABLE" "Added $(printf '%s\n' $ADDED | grep -c .) entr(y/ies) ($PROTO, $SET)"
                     apply_bg
                 fi
@@ -259,11 +283,19 @@ case "$REQUEST_METHOD" in
                 "$LO" set on $VALUES >/dev/null 2>&1
                 # shellcheck disable=SC2086
                 "$LO" via - $VALUES >/dev/null 2>&1
+                notes_set "$(printf '%s\n' "$VALUES" | jq -R . | jq -cs .)" ""
                 log_action "LIST_TABLE" "Deleted $(printf '%s\n' "$VALUES" | grep -c .) own entr(y/ies) ($SET)"
                 apply_bg
                 # the last entry of a dedicated group gone: its servers rejoin the shared group
                 [ "$DED" = "$(dedicated_ids)" ] || rebuild_via "$DED"
                 json_success "{\"applying\":true}"
+                ;;
+            note)
+                VALS=$(printf '%s' "$BODY" | jq -c '[.values[]? | strings | ltrimstr("*.") | ltrimstr("*") | select(length > 0)]')
+                [ "$VALS" != "[]" ] || { json_error "listtable.errors.empty" 400; exit 0; }
+                notes_set "$VALS" "$(printf '%s' "$BODY" | jq -r '.note // "" | strings')" || { json_error "Cannot save" 500; exit 0; }
+                log_action "LIST_TABLE" "Comment on $(printf '%s' "$VALS" | jq length) entr(y/ies)"
+                json_success "{\"notes\":$(jq -c '.notes // {}' "$VPN_MANAGER_HOME/list-overrides.json")}"
                 ;;
             via)
                 # {"values":[..], "server":"<config id>" | ""} — "" back to the group's way
