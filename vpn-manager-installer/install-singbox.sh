@@ -1422,7 +1422,8 @@ install_vpn_manager() {
             log_ok "Copied list UDP-only domains"
         fi
     fi
-    if [ -f "$SCRIPT_DIR/config/device-routing.json" ]; then
+    # device routing rules: the default only when the router has none (an update keeps them)
+    if [ -f "$SCRIPT_DIR/config/device-routing.json" ] && [ ! -s "$VPN_MANAGER_HOME/device-routing.json" ]; then
         cp "$SCRIPT_DIR/config/device-routing.json" "$VPN_MANAGER_HOME/"
     fi
     
@@ -1584,16 +1585,22 @@ EOF
         log_ok "Auth reset script installed"
     fi
     
-    # Copy files IP-subnets (for voice calls and t.p.)
+    # Own IP subnets ("My" entries of the lists table): the default file only on a router
+    # that has none yet. Before 3.1.23 every update copied it over and the user's own
+    # subnets were lost (domains were always kept)
     if [ -f "$SUBNETS_FILE_SRC" ]; then
-        cp "$SUBNETS_FILE_SRC" "$SUBNETS_FILE"
+        if [ ! -s "$SUBNETS_FILE" ]; then
+            cp "$SUBNETS_FILE_SRC" "$SUBNETS_FILE"
+            log_ok "Copied list IP-subnets (TCP+UDP)"
+        fi
         sed -i 's/\r$//' "$SUBNETS_FILE"
-        log_ok "Copied list IP-subnets (TCP+UDP)"
     fi
     if [ -f "$SUBNETS_UDP_FILE_SRC" ]; then
-        cp "$SUBNETS_UDP_FILE_SRC" "$SUBNETS_UDP_FILE"
+        if [ ! -s "$SUBNETS_UDP_FILE" ]; then
+            cp "$SUBNETS_UDP_FILE_SRC" "$SUBNETS_UDP_FILE"
+            log_ok "Copied list IP-subnets (UDP-only)"
+        fi
         sed -i 's/\r$//' "$SUBNETS_UDP_FILE"
-        log_ok "Copied list IP-subnets (UDP-only)"
     fi
     
     # Fix CRLF in existing domain files (in case they were copied from Windows earlier)
